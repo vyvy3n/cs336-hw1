@@ -71,14 +71,27 @@ class Segmenter:
 
 
 class Merger:
-    """Class that merge token (bytes)"""
+    """Class that keeps a list of byte‐pair merges and a rank‐lookup dict."""
 
     def __init__(self, merges: list[tuple[bytes, bytes]] | None = None):
-        self.merges = merges or []
+        # Store merges in a plain list
+        self.merges: list[tuple[bytes, bytes]] = []
+        # The rank‐lookup dictionary
+        self.merges_dict: dict[bytes, dict[bytes, int]] = {}
 
-        self.merges_dict = {}
-        for rank, (a, b) in enumerate(self.merges):
-            self.merges_dict.setdefault(a, {})[b] = rank
+        # If an initial list was given, add each through our helper
+        if merges:
+            for a, b in merges:
+                self.add_merge(a, b)
+
+    def add_merge(self, a: bytes, b: bytes) -> None:
+        """
+        Append the pair (a,b) to self.merges and register it in self.merges_dict.
+        The “rank” is simply the index in self.merges.
+        """
+        self.merges.append((a, b))
+        rank = len(self.merges) - 1
+        self.merges_dict.setdefault(a, {})[b] = rank
 
     def __call__(self, word_bytes: list[bytes]) -> list[bytes]:
         """
