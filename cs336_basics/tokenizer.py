@@ -18,14 +18,11 @@ class Tokenizer:
         self.merges = merges
         self.special_tokens = special_tokens or []
         self.reverse_vocab = {v: k for k, v in self.vocab.items()}
-        self.special_bytes_temp = {}
         self.pretoken_to_id = {}
+        self.special_bytes = {}
         for tok in self.special_tokens:
             tok_bytes = tok.encode("utf-8")
-            self.special_bytes_temp[tok] = self.reverse_vocab[tok_bytes]
-
-        # need to reverse special bytes so that we consider largest special tokens first
-        self.special_bytes = dict(sorted(self.special_bytes_temp.items(), key=lambda item: len(item[0]), reverse=True))
+            self.special_bytes[tok] = self.reverse_vocab[tok_bytes]
 
         self.merges_dict = {}
         for rank, (a, b) in enumerate(self.merges):
@@ -62,6 +59,7 @@ class Tokenizer:
                 if "_end" in node:
                     last_match = node["_end"]
                     last_pos = j
+
             if last_match is not None:
                 # flush any buffered “normal” bytes so far
                 if buffer_bytes:
