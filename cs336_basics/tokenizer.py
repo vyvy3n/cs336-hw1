@@ -7,28 +7,12 @@ import heapq
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
 
-class Tokenizer:
+class Segmenter:
     def __init__(
         self,
-        vocab: dict[int, bytes],
-        merges: list[tuple[bytes, bytes]],
         special_tokens: list[str] | None = None,
     ):
-        self.vocab = vocab
-        self.merges = merges
         self.special_tokens = special_tokens or []
-        self.reverse_vocab = {v: k for k, v in self.vocab.items()}
-        self.pretoken_to_id = {}
-        self.special_bytes = {}
-        for tok in self.special_tokens:
-            tok_bytes = tok.encode("utf-8")
-            self.special_bytes[tok] = self.reverse_vocab[tok_bytes]
-
-        self.merges_dict = {}
-        for rank, (a, b) in enumerate(self.merges):
-            self.merges_dict.setdefault(a, {})[b] = rank
-
-        self._PAT_RE = re.compile(PAT)
 
         # Build a simple byte‐trie for special tokens
         # (each key is a UTF‐8 string; store bytes-list for matching)
@@ -40,7 +24,7 @@ class Tokenizer:
                 node = node.setdefault(b, {})
             node["_end"] = tok  # mark end‐of‐special‐token at this node
 
-    def segment_special_tokens(self, text: str) -> list[tuple[bool, str]]:
+    def __call__(self, text: str) -> list[tuple[bool, str]]:
         data = text.encode("utf-8")  # work in bytes for exact matches
         i = 0
         nbytes = len(data)
@@ -76,6 +60,32 @@ class Tokenizer:
         if buffer_bytes:
             result.append((False, buffer_bytes.decode("utf-8", "ignore")))
         return result
+
+
+class BPETokenizer:
+    """A BPE tokenizer that uses the provided vocab, merges, and special tokens."""
+
+    def __init__(
+        self,
+        vocab: dict[int, bytes],
+        merges: list[tuple[bytes, bytes]],
+        special_tokens: list[str] | None = None,
+    ):
+        self.vocab = vocab
+        self.merges = merges
+        self.segmenter = Segmenter(special_tokens=special_tokens)
+        self.reverse_vocab = {v: k for k, v in self.vocab.items()}
+        self.pretoken_to_id = {}
+        self.special_bytes = {}
+        for tok in self.segmenter.special_tokens:
+            tok_bytes = tok.encode("utf-8")
+            self.special_bytes[tok] = self.reverse_vocab[tok_bytes]
+
+        self.merges_dict = {}
+        for rank, (a, b) in enumerate(self.merges):
+            self.merges_dict.setdefault(a, {})[b] = rank
+
+        self._PAT_RE = re.compile(PAT)
 
     def apply_merges(self, word_bytes: list[bytes]) -> list[bytes]:
         """
@@ -177,7 +187,7 @@ class Tokenizer:
         return result
 
     def encode(self, text: str) -> list[int]:
-        segments = self.segment_special_tokens(text)
+        segments = self.segmenter(text)
         append = []
         pretoken_to_id = self.pretoken_to_id
         special_bytes = self.special_bytes
