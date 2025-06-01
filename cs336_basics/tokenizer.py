@@ -1,5 +1,6 @@
 import os
 import regex as re
+from collections import Counter
 from collections.abc import Iterable, Iterator
 import heapq
 from typing import BinaryIO
@@ -266,13 +267,23 @@ class BPETrainer:
         split_special_token: bytes = b"<|endoftext|>",
         desired_num_chunks: int = 1,
     ):
+        
         assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
 
         self.input_path = input_path
-        self.vocab_size = vocab_size
         self.split_special_token = split_special_token
         self.desired_num_chunks = desired_num_chunks
         self.segmenter = Segmenter(special_tokens=special_tokens)
+        self.merger = Merger()
+
+        self.vocab = {i: bytes([i]) for i in range(256)}
+
+        # add special tokens 
+        for token in self.segmenter.special_tokens:
+            token_bytes = token.encode('utf-8')
+            self.vocab[len(self.vocab)] = token_bytes
+        
+        self.num_merges = vocab_size - len(self.vocab)
 
         with open(file=input_path, mode="rb") as f:
             self.boundaries = self.find_chunk_boundaries(f)
@@ -333,23 +344,38 @@ class BPETrainer:
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
         """
+        if self.num_merges <= 0:
+            return self.vocab, []
+        
         with open(file=self.input_path, mode="rb") as f:
             for start, end in zip(self.boundaries[:-1], self.boundaries[1:]):
                 f.seek(start)
                 chunk = f.read(end - start).decode("utf-8", errors="ignore")
+                counter = Counter()
                 segments = self.segmenter(chunk)
                 for is_special, segment in segments:
                     if not is_special:
-                        pass
+                        word_bytes = [bytes([b]) for b in segment.encode("utf-8")]
+                        merged = self.merger(word_bytes)
+                        counter.update(zip(merged, merged[1:]))
+                        print(counter)
+                        return
+
 
 
 if __name__ == "__main__":
     trainer = BPETrainer(
         input_path="tests/fixtures/tinystories_sample_5M.txt",
-        vocab_size=0,
+        vocab_size=1000,
         special_tokens=["<|endoftext|>"],
         desired_num_chunks=10,
     )
     print(trainer.split_special_token)
     print(trainer.boundaries, len(trainer.boundaries))
     trainer.train()
+    # m = Merger()
+    # segment = "ameli"
+    # word_bytes = [bytes([b]) for b in segment.encode("utf-8")]
+    # print(word_bytes)
+    # o = m(word_bytes)
+    # print(o)
