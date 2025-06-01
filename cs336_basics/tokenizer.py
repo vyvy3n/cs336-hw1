@@ -2,6 +2,7 @@ import os
 import regex as re
 from collections.abc import Iterable, Iterator
 import heapq
+from typing import BinaryIO
 
 
 # Parsing pattern used in GPT2
@@ -29,6 +30,9 @@ class Segmenter:
             node["_end"] = tok  # mark end‐of‐special‐token at this node
 
     def __call__(self, text: str) -> list[tuple[bool, str]]:
+        """
+        Get the list of segments (bool, str) from the text.
+        """
         data = text.encode("utf-8")  # work in bytes for exact matches
         i = 0
         nbytes = len(data)
@@ -66,32 +70,17 @@ class Segmenter:
         return result
 
 
-class BPETokenizer:
-    """A BPE tokenizer that uses the provided vocab, merges, and special tokens."""
+class Merger:
+    """Class that merge token (bytes)"""
 
-    def __init__(
-        self,
-        vocab: dict[int, bytes],
-        merges: list[tuple[bytes, bytes]],
-        special_tokens: list[str] | None = None,
-    ):
-        self.vocab = vocab
-        self.merges = merges
-        self.segmenter = Segmenter(special_tokens=special_tokens)
-        self.reverse_vocab = {v: k for k, v in self.vocab.items()}
-        self.pretoken_to_id = {}
-        self.special_bytes = {}
-        for tok in self.segmenter.special_tokens:
-            tok_bytes = tok.encode("utf-8")
-            self.special_bytes[tok] = self.reverse_vocab[tok_bytes]
+    def __init__(self, merges: list[tuple[bytes, bytes]] | None = None):
+        self.merges = merges or []
 
         self.merges_dict = {}
         for rank, (a, b) in enumerate(self.merges):
             self.merges_dict.setdefault(a, {})[b] = rank
 
-        self._PAT_RE = re.compile(PAT)
-
-    def apply_merges(self, word_bytes: list[bytes]) -> list[bytes]:
+    def __call__(self, word_bytes: list[bytes]) -> list[bytes]:
         """
         Given a list of byte‐tokens, repeatedly merge the pair (a, b) with the lowest rank
         (according to self.merges_dict) until no more mergeable adjacent pairs remain.
@@ -190,6 +179,28 @@ class BPETokenizer:
 
         return result
 
+
+class BPETokenizer:
+    """A BPE tokenizer that uses the provided vocab, merges, and special tokens."""
+
+    def __init__(
+        self,
+        vocab: dict[int, bytes],
+        merges: list[tuple[bytes, bytes]],
+        special_tokens: list[str] | None = None,
+    ):
+        self.vocab = vocab
+        self.merger = Merger(merges=merges)
+        self.segmenter = Segmenter(special_tokens=special_tokens)
+        self.reverse_vocab = {v: k for k, v in self.vocab.items()}
+        self.pretoken_to_id = {}
+        self.special_bytes = {}
+        for tok in self.segmenter.special_tokens:
+            tok_bytes = tok.encode("utf-8")
+            self.special_bytes[tok] = self.reverse_vocab[tok_bytes]
+
+        self._PAT_RE = re.compile(PAT)
+
     def encode(self, text: str) -> list[int]:
         segments = self.segmenter(text)
         append = []
@@ -197,7 +208,7 @@ class BPETokenizer:
         special_bytes = self.special_bytes
         reverse_vocab = self.reverse_vocab
         pattern = self._PAT_RE.finditer
-        apply_merges = self.apply_merges
+        apply_merges = self.merger
 
         for is_special, token in segments:
             if is_special:
@@ -239,7 +250,93 @@ class BPETrainer:
         input_path: str | os.PathLike,
         vocab_size: int,
         special_tokens: list[str] | None = None,
+        split_special_token: bytes = b"<|endoftext|>",
+        desired_num_chunks: int = 1,
     ):
+        assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
+
         self.input_path = input_path
         self.vocab_size = vocab_size
+        self.split_special_token = split_special_token
+        self.desired_num_chunks = desired_num_chunks
         self.segmenter = Segmenter(special_tokens=special_tokens)
+
+        with open(file=input_path, mode="rb") as f:
+            self.boundaries = self.find_chunk_boundaries(f)
+
+    def find_chunk_boundaries(
+        self,
+        file: BinaryIO,
+    ) -> list[int]:
+        """
+        Chunk the file into parts that can be counted independently.
+        May return fewer chunks if the boundaries end up overlapping.
+        """
+
+        # Get total file size in bytes
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
+
+        chunk_size = file_size // self.desired_num_chunks
+
+        # Initial guesses for chunk boundary locations, uniformly spaced
+        # Chunks start on previous index, don't include last index
+        chunk_boundaries = [i * chunk_size for i in range(self.desired_num_chunks + 1)]
+        chunk_boundaries[-1] = file_size
+
+        mini_chunk_size = 4096  # Read ahead by 4k bytes at a time
+
+        for bi in range(1, len(chunk_boundaries) - 1):
+            initial_position = chunk_boundaries[bi]
+            file.seek(initial_position)  # Start at boundary guess
+            while True:
+                mini_chunk = file.read(mini_chunk_size)  # Read a mini chunk
+
+                # If EOF, this boundary should be at the end of the file
+                if mini_chunk == b"":
+                    chunk_boundaries[bi] = file_size
+                    break
+
+                # Find the special token in the mini chunk
+                found_at = mini_chunk.find(self.split_special_token)
+                if found_at != -1:
+                    chunk_boundaries[bi] = initial_position + found_at
+                    break
+                initial_position += mini_chunk_size
+
+        # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
+        return sorted(set(chunk_boundaries))
+
+    def train(self) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+        """
+        Returns:
+        tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+            vocab:
+                The trained tokenizer vocabulary, a mapping from int (token ID in the vocabulary)
+                to bytes (token bytes)
+            merges:
+                BPE merges. Each list item is a tuple of bytes (<token1>, <token2>),
+                representing that <token1> was merged with <token2>.
+                Merges are ordered by order of creation.
+        """
+        with open(file=self.input_path, mode="rb") as f:
+            for start, end in zip(self.boundaries[:-1], self.boundaries[1:]):
+                f.seek(start)
+                chunk = f.read(end - start).decode("utf-8", errors="ignore")
+                segments = self.segmenter(chunk)
+                for is_special, segment in segments:
+                    if not is_special:
+                        pass
+
+
+if __name__ == "__main__":
+    trainer = BPETrainer(
+        input_path="tests/fixtures/tinystories_sample_5M.txt",
+        vocab_size=0,
+        special_tokens=["<|endoftext|>"],
+        desired_num_chunks=10,
+    )
+    print(trainer.split_special_token)
+    print(trainer.boundaries, len(trainer.boundaries))
+    trainer.train()
