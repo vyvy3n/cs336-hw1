@@ -32,7 +32,7 @@ class Tokenizer:
 
         self._PAT_RE = re.compile(PAT)
 
-    def segment_special_tokens(self, text: str) -> list[int]:
+    def segment_special_tokens(self, text: str) -> list[tuple[bool, str]]:
         i = 0
         result = []
         buffer = []
@@ -101,5 +101,5 @@ class Tokenizer:
             yield from self.encode(text)
 
     def decode(self, ids: list[int]) -> str:
-        output_bytes = b"".join(map(self.vocab.get,ids))
+        output_bytes = b"".join(map(self.vocab.get, ids))
         return output_bytes.decode("utf-8", errors="replace")
