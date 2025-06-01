@@ -1,5 +1,6 @@
 import regex as re
 from collections.abc import Iterable, Iterator
+import heapq
 
 
 # Parsing pattern used in GPT2
@@ -79,41 +80,135 @@ class Tokenizer:
         return result
 
     def apply_merges(self, word_bytes: list[bytes]) -> list[bytes]:
-        while True:
-            best_rank = None
-            best_pos = None
-            for i in range(len(word_bytes) - 1):
-                a, b = word_bytes[i], word_bytes[i + 1]
-                rank = self.merges_dict.get(a, {}).get(b)
-                if rank is not None and (best_rank is None or rank < best_rank):
-                    best_rank, best_pos = rank, i
-            if best_pos is None:
+        """
+        Given a list of byte‐tokens, repeatedly merge the pair (a, b) with the lowest rank
+        (according to self.merges_dict) until no more mergeable adjacent pairs remain.
+
+        Uses a min‐heap to track only the candidate pairs, leading to roughly O(n log n)
+        """
+        n = len(word_bytes)
+        if n < 2:
+            return word_bytes[:]  # nothing to merge
+
+        # Build helper arrays for a doubly‐linked structure over indices 0..n-1
+        prev_idx = list(range(-1, n - 1))  # prev_idx[i] = i-1, except prev_idx[0] = -1
+        next_idx = list(range(1, n + 1))  # next_idx[i] = i+1, except next_idx[n-1] = n (sentinel)
+        alive = [True] * n  # alive[i] = whether token i is still “in play”
+
+        # A small helper to push (rank, left_index) if (i, j) is a valid merge pair
+        def push_pair(i: int, j: int):
+            """If (word_bytes[i], word_bytes[j]) is in merges_dict, push (rank, i) into heap."""
+            key_a = word_bytes[i]
+            key_b = word_bytes[j]
+            # merges_dict maps:   merges_dict[a][b] = rank (an integer)
+            # if a not in merges_dict or b not a valid neighbor, skip
+            rank = self.merges_dict.get(key_a, {}).get(key_b)
+            if rank is not None:
+                heapq.heappush(heap, (rank, i))
+
+        # Build the initial heap of all adjacent (i, i+1) pairs that exist in merges_dict
+        heap: list[tuple[int, int]] = []
+        for i in range(n - 1):
+            push_pair(i, i + 1)
+
+        # This counter keeps track of how many “tokens” are still alive
+        # so we know when we’re down to a single dummy sentinel or no merges left.
+        alive_count = n
+
+        while heap:
+            rank, i = heapq.heappop(heap)
+
+            # If i is no longer alive, or its “next” neighbor is gone, skip
+            if not alive[i]:
+                continue
+            j = next_idx[i]
+            if j >= n or not alive[j]:
+                # either j is the sentinel (n) or j has been merged away already
+                continue
+
+            # Double‐check that they still form a mergeable pair of the same rank:
+            a, b = word_bytes[i], word_bytes[j]
+            current_rank = self.merges_dict.get(a, {}).get(b)
+            if current_rank is None or current_rank != rank:
+                # either they’re no longer mergeable or their rank changed
+                continue
+
+            # ↓—— Perform the merge of indices i and j ———————————————————↓
+
+            # 1) Concatenate b onto a, store in position i
+            word_bytes[i] = a + b
+
+            # 2) “Kill” index j by marking alive[j]=False
+            alive[j] = False
+            alive_count -= 1
+
+            # 3) Splice j out of the linked structure:
+            nxt = next_idx[j]
+            next_idx[i] = nxt
+            if nxt < n:
+                prev_idx[nxt] = i
+
+            # 4) Now i’s new neighbors might form new mergeable pairs. Push them:
+
+            # 4a) Check if i has a “prev” neighbor
+            p = prev_idx[i]
+            if p >= 0 and alive[p]:
+                push_pair(p, i)
+
+            # 4b) Check if i has a “next” neighbor
+            q = next_idx[i]
+            if q < n and alive[q]:
+                push_pair(i, q)
+
+            # If we dropped below 2 alive tokens, there can’t be more merges
+            if alive_count < 2:
                 break
-            word_bytes[best_pos : best_pos + 2] = [word_bytes[best_pos] + word_bytes[best_pos + 1]]
-        return word_bytes
+
+        # ———— Extract the surviving tokens in order ——————
+        result: list[bytes] = []
+        idx = 0
+        # Find the first “alive” index
+        while idx < n and not alive[idx]:
+            idx += 1
+        # Walk forward via next_idx and collect bytes
+        while idx < n:
+            if alive[idx]:
+                result.append(word_bytes[idx])
+            idx = next_idx[idx]
+
+        return result
 
     def encode(self, text: str) -> list[int]:
-        # first segment the special tokens
         segments = self.segment_special_tokens(text)
-        # then encode the text
-        encoded = []
+        append = []
+        pretoken_to_id = self.pretoken_to_id
+        special_bytes = self.special_bytes
+        reverse_vocab = self.reverse_vocab
+        pattern = self._PAT_RE.finditer
+        apply_merges = self.apply_merges
+
         for is_special, token in segments:
             if is_special:
-                tok_id = self.special_bytes[token]
-                encoded.append(tok_id)
-            else:
-                for word_match in self._PAT_RE.finditer(token):
-                    word = word_match.group(0)
-                    cached_ids = self.pretoken_to_id.get(word)
-                    if cached_ids is not None:
-                        encoded.extend(cached_ids)
-                        continue
-                    word_bytes = [bytes([b]) for b in word.encode("utf-8")]
-                    word_bytes = self.apply_merges(word_bytes)
-                    tok_ids = [self.reverse_vocab[b] for b in word_bytes]
-                    self.pretoken_to_id[word] = tok_ids
-                    encoded.extend(tok_ids)
-        return encoded
+                append.append(special_bytes[token])
+                continue
+
+            for match in pattern(token):
+                word = match.group(0)
+
+                cached = pretoken_to_id.get(word)
+                if cached is not None:
+                    append.extend(cached)
+                    continue
+
+                # Encode UTF-8 and wrap bytes as needed
+                word_bytes = [bytes([b]) for b in word.encode("utf-8")]
+                merged = apply_merges(word_bytes)
+                ids = [reverse_vocab[b] for b in merged]
+
+                pretoken_to_id[word] = ids
+                append.extend(ids)
+
+        return append
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
         for text in iterable:
