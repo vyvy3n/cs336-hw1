@@ -32,31 +32,50 @@ class Tokenizer:
 
         self._PAT_RE = re.compile(PAT)
 
+        # Build a simple byte‐trie for special tokens
+        # (each key is a UTF‐8 string; store bytes-list for matching)
+        self._special_trie = {}
+        for tok in self.special_tokens:
+            node = self._special_trie
+            tok_bytes = tok.encode("utf-8")
+            for b in tok_bytes:
+                node = node.setdefault(b, {})
+            node["_end"] = tok  # mark end‐of‐special‐token at this node
+
     def segment_special_tokens(self, text: str) -> list[tuple[bool, str]]:
+        data = text.encode("utf-8")  # work in bytes for exact matches
         i = 0
-        result = []
-        buffer = []
-        n = len(text)
+        nbytes = len(data)
+        result: list[tuple[bool, str]] = []
+        buffer_bytes = bytearray()
 
-        while i < n:
-            match = False
-            for tok in self.special_bytes:
-                if text.startswith(tok, i):
-                    # first flush normal text
-                    if buffer:
-                        result.append((False, "".join(buffer)))
-                        buffer = []
-                    # then add the special token
-                    result.append((True, tok))
-                    i += len(tok)
-                    match = True
-                    break
-
-            if not match:
-                buffer.append(text[i])
+        while i < nbytes:
+            node = self._special_trie
+            j = i
+            last_match = None
+            last_pos = i
+            # walk as far as possible in the trie
+            while j < nbytes and data[j] in node:
+                node = node[data[j]]
+                j += 1
+                if "_end" in node:
+                    last_match = node["_end"]
+                    last_pos = j
+            if last_match is not None:
+                # flush any buffered “normal” bytes so far
+                if buffer_bytes:
+                    result.append((False, buffer_bytes.decode("utf-8", "ignore")))
+                    buffer_bytes = bytearray()
+                # append the special token
+                result.append((True, last_match))
+                i = last_pos
+            else:
+                # no special token starts here
+                buffer_bytes.append(data[i])
                 i += 1
-        if buffer:
-            result.append((False, "".join(buffer)))
+
+        if buffer_bytes:
+            result.append((False, buffer_bytes.decode("utf-8", "ignore")))
         return result
 
     def apply_merges(self, word_bytes: list[bytes]) -> list[bytes]:
