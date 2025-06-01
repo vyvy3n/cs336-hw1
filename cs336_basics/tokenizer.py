@@ -1,91 +1,105 @@
-from dataclasses import dataclass, field
-from collections import defaultdict
-
-@dataclass(frozen=True)
-class BPETokenizerParams:
-    """All you need to specify a BPETokenizer."""
-    vocab: dict[int, bytes]
-    merges: list[tuple[bytes, bytes]]
-    special_tokens: list[str] | None = None
-    bytes_id : dict[bytes,int] = field(default_factory=dict)
-
-    def __post_init__(self):
-        object.__setattr__(self, "bytes_id", {b: i for i, b in self.vocab.items()})
+import regex as re
+from collections.abc import Iterable, Iterator
 
 
-
-def merge(indices: list[int], pair: tuple[int, int], new_index: int) -> list[int]:  
-    """Return `indices`, but with all instances of `pair` replaced with `new_index`."""
-    new_indices = []  
-    new_indices.index
-    i = 0  
-    while i < len(indices):
-        if i + 1 < len(indices) and indices[i] == pair[0] and indices[i + 1] == pair[1]:
-            new_indices.append(new_index)
-            i += 2
-        else:
-            new_indices.append(indices[i])
-            i += 1
-    return new_indices
+# Parsing pattern used in GPT2
+PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
 
-class BPETokenizer:
-    """BPE tokenizer given a set of merges and a vocabulary."""
-    def __init__(self, params: BPETokenizerParams):
-        self.params = params
+class Tokenizer:
+    def __init__(
+        self,
+        vocab: dict[int, bytes],
+        merges: list[tuple[bytes, bytes]],
+        special_tokens: list[str] | None = None,
+    ):
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens or []
+        self.reverse_vocab = {v: k for k, v in self.vocab.items()}
+        self.special_bytes_temp = {}
+        self.pretoken_to_id = {}
+        for tok in self.special_tokens:
+            tok_bytes = tok.encode("utf-8")
+            self.special_bytes_temp[tok] = self.reverse_vocab[tok_bytes]
 
-    def encode(self, string: str) -> list[int]:
-        indices = list(map(int, string.encode("utf-8")))  
-        # Note: this is a very slow implementation
-        self.params.vocab
-        for pair in self.params.merges:
-            new_index = self.params.bytes_id[pair[0]+pair[1]]
-            pair = (int(pair[0]),int(pair[1]))
-            indices = merge(indices, pair, new_index)
-        return indices
+        # need to reverse special bytes so that we consider largest special tokens first
+        self.special_bytes = dict(sorted(self.special_bytes_temp.items(), key=lambda item: len(item[0]), reverse=True))
 
-    def decode(self, indices: list[int]) -> str:
-        bytes_list = list(map(lambda x: self.params.vocab.get(x,b""), indices))  
-        string = b"".join(bytes_list).decode("utf-8")  
-        return string
+        self.merges_dict = {}
+        for rank, (a, b) in enumerate(self.merges):
+            self.merges_dict.setdefault(a, {})[b] = rank
 
+        self._PAT_RE = re.compile(PAT)
 
+    def segment_special_tokens(self, text: str) -> list[int]:
+        i = 0
+        result = []
+        buffer = []
+        n = len(text)
 
-def train_bpe(string: str, num_merges: int) -> BPETokenizerParams:  
-    # Start with the list of bytes of `string`.
-    indices = list(map(int, string.encode("utf-8")))  
-    merges: dict[tuple[int, int], int] = {}  # index1, index2 => merged index
-    vocab: dict[int, bytes] = {x: bytes([x]) for x in range(256)}  # index -> bytes
+        while i < n:
+            match = False
+            for tok in self.special_bytes:
+                if text.startswith(tok, i):
+                    # first flush normal text
+                    if buffer:
+                        result.append((False, "".join(buffer)))
+                        buffer = []
+                    # then add the special token
+                    result.append((True, tok))
+                    i += len(tok)
+                    match = True
+                    break
 
-    for i in range(num_merges):
-        # Count the number of occurrences of each pair of tokens
-        counts = defaultdict(int)
-        for index1, index2 in zip(indices, indices[1:]):  # For each adjacent pair
-            counts[(index1, index2)] += 1  
+            if not match:
+                buffer.append(text[i])
+                i += 1
+        if buffer:
+            result.append((False, "".join(buffer)))
+        return result
 
-        # Find the most common pair.
-        pair = max(counts, key=counts.get)  
-        index1, index2 = pair
+    def apply_merges(self, word_bytes: list[bytes]) -> list[bytes]:
+        while True:
+            best_rank = None
+            best_pos = None
+            for i in range(len(word_bytes) - 1):
+                a, b = word_bytes[i], word_bytes[i + 1]
+                rank = self.merges_dict.get(a, {}).get(b)
+                if rank is not None and (best_rank is None or rank < best_rank):
+                    best_rank, best_pos = rank, i
+            if best_pos is None:
+                break
+            word_bytes[best_pos : best_pos + 2] = [word_bytes[best_pos] + word_bytes[best_pos + 1]]
+        return word_bytes
 
-        # "Merge that pair."
-        new_index = 256 + i  
-        merges[pair] = new_index  
-        vocab[new_index] = vocab[index1] + vocab[index2]  
-        indices = merge(indices, pair, new_index)  
+    def encode(self, text: str) -> list[int]:
+        # first segment the special tokens
+        segments = self.segment_special_tokens(text)
+        # then encode the text
+        encoded = []
+        for is_special, token in segments:
+            if is_special:
+                tok_id = self.special_bytes[token]
+                encoded.append(tok_id)
+            else:
+                for word_match in self._PAT_RE.finditer(token):
+                    word = word_match.group(0)
+                    cached_ids = self.pretoken_to_id.get(word)
+                    if cached_ids is not None:
+                        encoded.extend(cached_ids)
+                        continue
+                    word_bytes = [bytes([b]) for b in word.encode("utf-8")]
+                    word_bytes = self.apply_merges(word_bytes)
+                    tok_ids = [self.reverse_vocab[b] for b in word_bytes]
+                    self.pretoken_to_id[word] = tok_ids
+                    encoded.extend(tok_ids)
+        return encoded
 
-    return BPETokenizerParams(vocab=vocab, merges=merges)
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        for text in iterable:
+            yield from self.encode(text)
 
-if __name__ == "__main__":
-    # tk = train_bpe("sam go to france. sam came from france.",num_merges=10)
-    # print(tk)
-    # with open(r"tests\fixtures\tinystories_sample.txt",encoding="utf-8") as f:
-    #     print(type(f))
-    #     try:
-    #         # some_object_iterator = iter(f)
-    #         # print(list(some_object_iterator))
-    #         for i,x in enumerate(f):
-    #             print(i)
-    #             print(x)
-    #     except TypeError as te:
-    #         print(f, 'is not iterable',te)
-    pass
+    def decode(self, ids: list[int]) -> str:
+        output_bytes = b"".join(map(self.vocab.get,ids))
+        return output_bytes.decode("utf-8", errors="replace")
