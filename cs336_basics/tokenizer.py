@@ -1,3 +1,4 @@
+import os
 import regex as re
 from collections.abc import Iterable, Iterator
 import heapq
@@ -8,6 +9,9 @@ PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s
 
 
 class Segmenter:
+    """This class scans the raw input string, finds occurrences of any of the “special tokens”
+    (by working in raw UTF-8 bytes), and returns a sequence of segments"""
+
     def __init__(
         self,
         special_tokens: list[str] | None = None,
@@ -225,3 +229,17 @@ class BPETokenizer:
     def decode(self, ids: list[int]) -> str:
         output_bytes = b"".join(map(self.vocab.get, ids))
         return output_bytes.decode("utf-8", errors="replace")
+
+
+class BPETrainer:
+    """Train BPE tokenizer"""
+
+    def __init__(
+        self,
+        input_path: str | os.PathLike,
+        vocab_size: int,
+        special_tokens: list[str] | None = None,
+    ):
+        self.input_path = input_path
+        self.vocab_size = vocab_size
+        self.segmenter = Segmenter(special_tokens=special_tokens)
