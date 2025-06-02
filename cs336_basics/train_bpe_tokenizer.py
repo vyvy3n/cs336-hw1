@@ -1,157 +1,145 @@
 import pickle
 from collections import defaultdict, Counter
 import os
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 import regex as re
 from tqdm import tqdm
 from cs336_basics.pretokenization_helper import find_chunk_boundaries
-import multiprocessing as mp
 
-PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+# Pre-compile patterns once at module level to avoid recompiling in each worker
+PAT_REGEX = re.compile(r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+", re.UNICODE)
+SPECIAL_TOKENS = ["<|endoftext|>"]
+SPLIT_PATTERN = re.compile("|".join(re.escape(st) for st in SPECIAL_TOKENS))
+
+CHUNK_SIZE = 1 * 1024 * 1024  # 1 MiB
 
 
 def pretokenize_chunk(args):
-    file_path, start, end, special_tokens, pattern = args
+    file_path, start, end = args
     counts = defaultdict(int)
 
-    split_pattern = re.compile("|".join(re.escape(st) for st in special_tokens))
     with open(file_path, "rb") as f:
         f.seek(start)
         chunk_data = f.read(end - start).decode("utf-8", errors="replace")
 
-    chunks = re.split(split_pattern, chunk_data)
-    for chunk in chunks:
-        if chunk in special_tokens:
+    # Split on special tokens at most once per occurrence
+    parts = SPLIT_PATTERN.split(chunk_data)
+    for part in parts:
+        # Skip if exactly a special token
+        if part in SPECIAL_TOKENS:
             continue
-        for word in re.finditer(pattern, chunk):
-            word = word.group(0)
-            word_bytes = tuple(bytes([b]) for b in word.encode("utf-8"))
+        # Find all matches in part
+        for match in PAT_REGEX.finditer(part):
+            token = match.group(0)
+            # Encode to UTF-8 bytes and split into single-byte elements
+            b = token.encode("utf-8")
+            word_bytes = tuple(bytes([x]) for x in b)
             counts[word_bytes] += 1
 
     return counts
 
 
-def parallel_pretokenize(
-    input_path: str, special_tokens: list[str], num_processes: int
-) -> dict[tuple[bytes, ...], int]:
+def parallel_pretokenize(input_path: str, special_tokens: list[str]) -> dict[tuple[bytes, ...], int]:
+    """
+    Read the file in parallel, pretokenize into word-byte tuples, and return global counts.
+    """
+    # Determine chunk boundaries that don't split special tokens
     with open(input_path, "rb") as f:
-        boundaries = find_chunk_boundaries(f, num_processes, split_special_token=b"<|endoftext|>")
-
-    CHUNK_SIZE = 1 * 1024 * 1024
+        boundaries = find_chunk_boundaries(f, cpu_count(), split_special_token=SPECIAL_TOKENS[0].encode("utf-8"))
 
     tasks = []
     for i in range(len(boundaries) - 1):
         start, end = boundaries[i], boundaries[i + 1]
-        while start < end:
-            next_end = min(start + CHUNK_SIZE, end)
-            tasks.append((input_path, start, next_end, special_tokens, PAT))
-            start = next_end
+        # Subdivide large boundary into fixed-size chunks
+        pos = start
+        while pos < end:
+            next_end = min(pos + CHUNK_SIZE, end)
+            tasks.append((input_path, pos, next_end))
+            pos = next_end
 
     final_counts = defaultdict(int)
-    with Pool(num_processes) as pool:
-        for partial_counts in tqdm(pool.imap_unordered(pretokenize_chunk, tasks), total=len(tasks)):
-            for word, count in partial_counts.items():
-                final_counts[word] += count
+    # Use a process pool; workers share module-level compiled patterns
+    with Pool(cpu_count()) as pool:
+        for partial in tqdm(pool.imap_unordered(pretokenize_chunk, tasks), total=len(tasks), desc="Pretokenizing"):  # type: ignore
+            for word, cnt in partial.items():
+                final_counts[word] += cnt
 
     return final_counts
 
 
-def train_bpe(
-    input_path: str | os.PathLike,
-    vocab_size: int,
-    special_tokens: list[str],
-    **kwargs,
-):
+def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
     """
-    Given the path to an input corpus, run train a BPE tokenizer and output its vocabulary and merges.
-
-    Args:
-        input_path: Path to BPE tokenizer training data.
-        vocab_size: Total number of items in the tokenizer's vocabulary (including special tokens).
-        special_tokens: A list of string special tokens to be added to the tokenizer vocabulary.
-
-    Returns:
-        Tuple of (vocab, merges):
-            vocab: The trained tokenizer vocabulary, a mapping from int (token ID in the vocabulary)
-                    to bytes (token bytes)
-            merges: list[tuple[bytes, bytes]]
-                BPE merges. Each list item is a tuple of bytes (<token1>, <token2>),
-                representing that <token1> was merged with <token2>.
-                Merges are ordered by order of creation.
+    Train BPE vocabulary of size `vocab_size` (including initial bytes and special tokens).
     """
+    # Initialize vocabulary with all single bytes
     vocab = {i: bytes([i]) for i in range(256)}
-
-    # add special tokens
+    # Add special tokens
     for token in special_tokens:
-        token_bytes = token.encode("utf-8")
-        vocab[len(vocab)] = token_bytes
+        vocab[len(vocab)] = token.encode("utf-8")
 
     num_merges = vocab_size - len(vocab)
     if num_merges <= 0:
         return vocab, []
 
-    token_counts = parallel_pretokenize(input_path, special_tokens, mp.cpu_count())
+    # Get token counts (word as tuple of single-byte tokens)
+    token_counts = parallel_pretokenize(input_path, special_tokens)
 
-    # track merges
-    merges = []
+    # Initialize pair counts and locations
     pair_counts = Counter()
-    pair_locations = defaultdict(set)
-
-    for word, count in token_counts.items():
+    pair_locs = defaultdict(set)
+    for word, cnt in token_counts.items():
         for i in range(len(word) - 1):
-            pair = word[i : i + 2]
-            pair_counts[pair] += count
-            pair_locations[pair].add(word)
+            pair = (word[i], word[i + 1])
+            pair_counts[pair] += cnt
+            pair_locs[pair].add(word)
 
-    for _ in tqdm(range(num_merges)):
-        # find the most frequent pair
+    merges = []
+    # BPE merge loop
+    for _ in tqdm(range(num_merges), desc="BPE merges"):  # type: ignore
         if not pair_counts:
             break
-
-        most_frequent_pair, max_count = max(pair_counts.items(), key=lambda item: (item[1], item[0]))
-        if max_count <= 0:
+        # Find most frequent pair (break ties by lex order)
+        most_pair, freq = max(pair_counts.items(), key=lambda x: (x[1], x[0]))
+        if freq <= 0:
             break
-
-        merges.append(most_frequent_pair)
-
-        # add the most frequent pair to the vocab
+        merges.append(most_pair)
+        # Add new merged token to vocab
         new_token_id = len(vocab)
-        new_word = most_frequent_pair[0] + most_frequent_pair[1]
-        vocab[new_token_id] = new_word
+        new_bytes = most_pair[0] + most_pair[1]
+        vocab[new_token_id] = new_bytes
 
-        # merge this pair in all places that it shows up
-        # new_token_counts = defaultdict(int)
-        affected_tokens = pair_locations.pop(most_frequent_pair)
-        for old_tok in list(affected_tokens):
-            if old_tok not in token_counts:
+        # Tokens affected by this merge
+        affected = pair_locs.pop(most_pair, set())
+        for old_word in list(affected):
+            if old_word not in token_counts:
                 continue
-            cnt = token_counts[old_tok]
-
-            for i in range(len(old_tok) - 1):
-                pair = (old_tok[i], old_tok[i + 1])
-                pair_counts[pair] -= cnt
-                pair_locations[pair].discard(old_tok)
-                if pair_counts[pair] <= 0:
-                    pair_counts.pop(pair, None)
-                    pair_locations.pop(pair, None)
-
-            new_tok_list = []
+            cnt = token_counts.pop(old_word)
+            # Remove old pairs
+            for i in range(len(old_word) - 1):
+                p = (old_word[i], old_word[i + 1])
+                pair_counts[p] -= cnt
+                pair_locs[p].discard(old_word)
+                if pair_counts[p] <= 0:
+                    del pair_counts[p]
+                    del pair_locs[p]
+            # Build new word by merging occurrences
+            new_word_tokens = []
             i = 0
-            while i < len(old_tok):
-                if i < len(old_tok) - 1 and (old_tok[i], old_tok[i + 1]) == most_frequent_pair:
-                    new_tok_list.append(old_tok[i] + old_tok[i + 1])
+            L = len(old_word)
+            while i < L:
+                if i < L - 1 and (old_word[i], old_word[i + 1]) == most_pair:
+                    new_word_tokens.append(old_word[i] + old_word[i + 1])
                     i += 2
                 else:
-                    new_tok_list.append(old_tok[i])
+                    new_word_tokens.append(old_word[i])
                     i += 1
-            new_tok = tuple(new_tok_list)
-            for j in range(len(new_tok) - 1):
-                pair = (new_tok[j], new_tok[j + 1])
-                pair_counts[pair] += cnt
-                pair_locations[pair].add(new_tok)
-
-            token_counts.pop(old_tok)
-            token_counts[new_tok] = cnt
+            new_word = tuple(new_word_tokens)
+            token_counts[new_word] = cnt
+            # Add new pairs from new_word
+            for j in range(len(new_word) - 1):
+                p = (new_word[j], new_word[j + 1])
+                pair_counts[p] += cnt
+                pair_locs[p].add(new_word)
 
     return vocab, merges
 
@@ -160,10 +148,14 @@ def train_tokenizer():
     vocab, merges = train_bpe(
         input_path="data/owt_train.txt",
         vocab_size=32000,
-        special_tokens=["<|endoftext|>"],
+        special_tokens=SPECIAL_TOKENS,
     )
-    # serialize the vocab and merges
+    os.makedirs("cs336_basics/vocab", exist_ok=True)
     with open("cs336_basics/vocab/owt_train_vocab.pkl", "wb") as f:
         pickle.dump(vocab, f)
     with open("cs336_basics/vocab/owt_train_merges.pkl", "wb") as f:
         pickle.dump(merges, f)
+
+
+if __name__ == "__main__":
+    train_tokenizer()
