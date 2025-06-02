@@ -68,7 +68,7 @@ def parallel_pretokenize(
     return final_counts
 
 
-def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
+def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str], split_special_token: str = "<|endoftext|>"):
     """
     Train BPE vocabulary of size `vocab_size` (including initial bytes and special tokens).
     """
@@ -83,7 +83,7 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
         return vocab, []
 
     # Get token counts (word as tuple of single-byte tokens)
-    token_counts = parallel_pretokenize(input_path, special_tokens)
+    token_counts = parallel_pretokenize(input_path, special_tokens, split_special_token)
 
     # Initialize pair counts and locations
     pair_counts = Counter()
