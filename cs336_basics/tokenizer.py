@@ -51,7 +51,7 @@ class Segmenter:
             if last_match is not None:
                 # flush any buffered “normal” bytes so far
                 if buffer_bytes:
-                    result.append((False, buffer_bytes.decode("utf-8", "ignore")))
+                    result.append((False, buffer_bytes.decode("utf-8", "replace")))
                     buffer_bytes = bytearray()
                 # append the special token
                 result.append((True, last_match))
@@ -62,7 +62,7 @@ class Segmenter:
                 i += 1
 
         if buffer_bytes:
-            result.append((False, buffer_bytes.decode("utf-8", "ignore")))
+            result.append((False, buffer_bytes.decode("utf-8", "replace")))
         return result
 
 

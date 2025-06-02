@@ -1,6 +1,4 @@
-import pickle
 from collections import defaultdict, Counter
-import os
 from multiprocessing import Pool, cpu_count
 import regex as re
 from tqdm import tqdm
@@ -8,14 +6,13 @@ from cs336_basics.pretokenization_helper import find_chunk_boundaries
 
 # Pre-compile patterns once at module level to avoid recompiling in each worker
 PAT_REGEX = re.compile(r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+", re.UNICODE)
-SPECIAL_TOKENS = ["<|endoftext|>"]
-SPLIT_PATTERN = re.compile("|".join(re.escape(st) for st in SPECIAL_TOKENS))
+
 
 CHUNK_SIZE = 1 * 1024 * 1024  # 1 MiB
 
 
-def pretokenize_chunk(args):
-    file_path, start, end = args
+def pretokenize_chunk(args: tuple[str, int, int, list[str], re.Pattern[str]]):
+    file_path, start, end, special_tokens, split_pattern = args
     counts = defaultdict(int)
 
     with open(file_path, "rb") as f:
@@ -23,10 +20,10 @@ def pretokenize_chunk(args):
         chunk_data = f.read(end - start).decode("utf-8", errors="replace")
 
     # Split on special tokens at most once per occurrence
-    parts = SPLIT_PATTERN.split(chunk_data)
+    parts = split_pattern.split(chunk_data)
     for part in parts:
         # Skip if exactly a special token
-        if part in SPECIAL_TOKENS:
+        if part in special_tokens:
             continue
         # Find all matches in part
         for match in PAT_REGEX.finditer(part):
@@ -39,13 +36,17 @@ def pretokenize_chunk(args):
     return counts
 
 
-def parallel_pretokenize(input_path: str, special_tokens: list[str]) -> dict[tuple[bytes, ...], int]:
+def parallel_pretokenize(
+    input_path: str, special_tokens: list[str], split_special_token: str = "<|endoftext|>"
+) -> dict[tuple[bytes, ...], int]:
     """
     Read the file in parallel, pretokenize into word-byte tuples, and return global counts.
     """
+
+    split_pattern = re.compile("|".join(re.escape(st) for st in special_tokens))
     # Determine chunk boundaries that don't split special tokens
     with open(input_path, "rb") as f:
-        boundaries = find_chunk_boundaries(f, cpu_count(), split_special_token=SPECIAL_TOKENS[0].encode("utf-8"))
+        boundaries = find_chunk_boundaries(f, cpu_count(), split_special_token=split_special_token[0].encode("utf-8"))
 
     tasks = []
     for i in range(len(boundaries) - 1):
@@ -54,7 +55,7 @@ def parallel_pretokenize(input_path: str, special_tokens: list[str]) -> dict[tup
         pos = start
         while pos < end:
             next_end = min(pos + CHUNK_SIZE, end)
-            tasks.append((input_path, pos, next_end))
+            tasks.append((input_path, pos, next_end, special_tokens, split_pattern))
             pos = next_end
 
     final_counts = defaultdict(int)
@@ -142,20 +143,3 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
                 pair_locs[p].add(new_word)
 
     return vocab, merges
-
-
-def train_tokenizer():
-    vocab, merges = train_bpe(
-        input_path="data/owt_train.txt",
-        vocab_size=32000,
-        special_tokens=SPECIAL_TOKENS,
-    )
-    os.makedirs("cs336_basics/vocab", exist_ok=True)
-    with open("cs336_basics/vocab/owt_train_vocab.pkl", "wb") as f:
-        pickle.dump(vocab, f)
-    with open("cs336_basics/vocab/owt_train_merges.pkl", "wb") as f:
-        pickle.dump(merges, f)
-
-
-if __name__ == "__main__":
-    train_tokenizer()
