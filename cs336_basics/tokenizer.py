@@ -14,11 +14,9 @@ class Segmenter:
     """This class scans the raw input string, finds occurrences of any of the “special tokens”
     (by working in raw UTF-8 bytes), and returns a sequence of segments"""
 
-    def __init__(
-        self,
-        special_tokens: list[str] | None = None,
-    ):
+    def __init__(self, special_tokens: list[str] | None = None, in_bytes: bool = False):
         self.special_tokens = special_tokens or []
+        self.in_string = not in_bytes
 
         # Build a simple byte‐trie for special tokens
         # (each key is a UTF‐8 string; store bytes-list for matching)
@@ -30,11 +28,15 @@ class Segmenter:
                 node = node.setdefault(b, {})
             node["_end"] = tok  # mark end‐of‐special‐token at this node
 
-    def __call__(self, text: str) -> list[tuple[bool, str]]:
+    def __call__(self, text: str | bytes) -> list[tuple[bool, str | bytes]]:
         """
         Get the list of segments (bool, str) from the text.
         """
-        data = text.encode("utf-8")  # work in bytes for exact matches
+        if self.in_string:
+            data = text.encode("utf-8")  # work in bytes for exact matches
+        else:
+            data = text
+
         i = 0
         nbytes = len(data)
         result: list[tuple[bool, str]] = []
@@ -56,7 +58,9 @@ class Segmenter:
             if last_match is not None:
                 # flush any buffered “normal” bytes so far
                 if buffer_bytes:
-                    result.append((False, buffer_bytes.decode("utf-8", "ignore")))
+                    if self.in_string:
+                        buffer_bytes = buffer_bytes.decode("utf-8", "ignore")
+                    result.append((False, buffer_bytes))
                     buffer_bytes = bytearray()
                 # append the special token
                 result.append((True, last_match))
@@ -67,7 +71,9 @@ class Segmenter:
                 i += 1
 
         if buffer_bytes:
-            result.append((False, buffer_bytes.decode("utf-8", "ignore")))
+            if self.in_string:
+                buffer_bytes = buffer_bytes.decode("utf-8", "ignore")
+            result.append((False, buffer_bytes))
         return result
 
 
@@ -267,22 +273,21 @@ class BPETrainer:
         split_special_token: bytes = b"<|endoftext|>",
         desired_num_chunks: int = 1,
     ):
-        
         assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
 
         self.input_path = input_path
         self.split_special_token = split_special_token
         self.desired_num_chunks = desired_num_chunks
-        self.segmenter = Segmenter(special_tokens=special_tokens)
+        self.segmenter = Segmenter(special_tokens=special_tokens, in_bytes=True)
         self.merger = Merger()
 
         self.vocab = {i: bytes([i]) for i in range(256)}
 
-        # add special tokens 
+        # add special tokens
         for token in self.segmenter.special_tokens:
-            token_bytes = token.encode('utf-8')
+            token_bytes = token.encode("utf-8")
             self.vocab[len(self.vocab)] = token_bytes
-        
+
         self.num_merges = vocab_size - len(self.vocab)
 
         with open(file=input_path, mode="rb") as f:
@@ -346,33 +351,35 @@ class BPETrainer:
         """
         if self.num_merges <= 0:
             return self.vocab, []
-        
-        with open(file=self.input_path, mode="rb") as f:
-            for start, end in zip(self.boundaries[:-1], self.boundaries[1:]):
-                f.seek(start)
-                chunk = f.read(end - start).decode("utf-8", errors="ignore")
-                counter = Counter()
-                segments = self.segmenter(chunk)
-                for is_special, segment in segments:
-                    if not is_special:
-                        word_bytes = [bytes([b]) for b in segment.encode("utf-8")]
-                        merged = self.merger(word_bytes)
-                        counter.update(zip(merged, merged[1:]))
-                        print(counter)
-                        return
 
+        with open(file=self.input_path, mode="rb") as f:
+            for _ in range(self.num_merges):
+                counter = Counter()
+                for start, end in zip(self.boundaries[:-1], self.boundaries[1:]):
+                    f.seek(start)
+                    chunk = f.read(end - start)
+                    segments = self.segmenter(chunk)
+                    for is_special, segment in segments:
+                        if not is_special:
+                            word_bytes = [bytes([b]) for b in segment]
+                            merged = self.merger(word_bytes)
+                            counter.update(zip(merged, merged[1:]))
+                pair = counter.most_common(1)[0][0]
+                self.merger.add_merge(*pair)
+                self.vocab[len(self.vocab)] = pair[0] + pair[1]
+
+        return self.vocab, self.merger.merges
 
 
 if __name__ == "__main__":
     trainer = BPETrainer(
         input_path="tests/fixtures/tinystories_sample_5M.txt",
-        vocab_size=1000,
+        vocab_size=500,
         special_tokens=["<|endoftext|>"],
-        desired_num_chunks=10,
+        # desired_num_chunks=10,
     )
-    print(trainer.split_special_token)
-    print(trainer.boundaries, len(trainer.boundaries))
-    trainer.train()
+    res = trainer.train()
+    print(res[1])
     # m = Merger()
     # segment = "ameli"
     # word_bytes = [bytes([b]) for b in segment.encode("utf-8")]
