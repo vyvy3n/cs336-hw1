@@ -37,8 +37,13 @@ def cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
+    mask = targets != -100
+    masked_inputs = inputs[mask]
+    indices = [torch.arange(masked_inputs.size(0)), targets[mask]]
+    return (torch.logsumexp(masked_inputs, dim=-1) - masked_inputs[indices]).mean()
 
 
+@torch.no_grad()
 def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
     """Given a set of parameters, clip their combined gradients to have l2 norm at most max_l2_norm.
 
@@ -48,3 +53,15 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
+    norms = []
+    for param in parameters:
+        grad = param.grad
+        if grad is not None:
+            norm = grad.norm()
+            norms.append(norm)
+    all_norm = torch.stack(norms).norm().item()
+    for param in parameters:
+        grad = param.grad
+        if grad is not None:
+            if all_norm > max_l2_norm:
+                grad *= max_l2_norm / (all_norm + 1e-6)
