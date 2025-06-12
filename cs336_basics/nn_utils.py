@@ -37,10 +37,11 @@ def cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    mask = targets != -100
-    masked_inputs = inputs[mask]
-    indices = [torch.arange(masked_inputs.size(0)), targets[mask]]
-    return (torch.logsumexp(masked_inputs, dim=-1) - masked_inputs[indices]).mean()
+    maxes, _ = inputs.max(dim=-1, keepdim=True)
+    shift_features = inputs - maxes
+    logsumexp = shift_features.exp().sum(dim=-1).log()
+    indices = [torch.arange(inputs.size(0)), targets]
+    return (logsumexp - shift_features[indices]).mean()
 
 
 @torch.no_grad()
