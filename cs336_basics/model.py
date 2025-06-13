@@ -1,5 +1,5 @@
 import torch
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from torch import Tensor
 from torch.nn import Module, Parameter
 from numpy import sqrt
@@ -10,7 +10,7 @@ from einops import einsum
 def trunc_normal(
     tensor: Tensor,
     mean: float = 0.0,
-    std: float | None = None,
+    std: float = 1.0,
     a: float = -3.0,
     b: float = 3.0,
 ) -> Tensor:
@@ -29,6 +29,9 @@ def trunc_normal(
     return tensor
 
 
+torch.nn.Linear
+
+
 class Linear(Module):
     """a Linear layer, compute the transformation of a batched input.
 
@@ -43,6 +46,9 @@ class Linear(Module):
     ):
         super().__init__()
 
+        self.d_in = d_in
+        self.d_out = d_out
+
         self.weights = Parameter(trunc_normal(torch.empty(d_out, d_in), std=1 / sqrt(d_in), a=-3, b=3))
 
     def forward(self, in_features: Float[Tensor, " ... d_in"]) -> Float[Tensor, " ... d_out"]:
@@ -54,3 +60,32 @@ class Linear(Module):
             Float[Tensor, "... d_out"]: The transformed output of your linear module.
         """
         return einsum(in_features, self.weights, "... d_in, d_out d_in -> ... d_out")
+
+
+class Embedding(Module):
+    """an Embedding layer, get the embeddings for a batch of token ids."""
+
+    def __init__(
+        self,
+        vocab_size: int,
+        d_model: int,
+    ) -> Float[Tensor, " ... d_model"]:
+        """
+        Args:
+            vocab_size (int): The number of embeddings in the vocabulary
+            d_model (int): The size of the embedding dimension
+        """
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        self.weights = Parameter(trunc_normal(torch.empty(vocab_size, d_model), a=-3, b=3))
+
+    def forward(self, token_ids: Int[Tensor, " ..."]) -> Float[Tensor, " ... d_model"]:
+        """
+        Args:
+            token_ids (Int[Tensor, "..."]): The set of token ids to fetch from the Embedding layer
+
+        Returns:
+            Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
+        """
+        return self.weights[token_ids]
