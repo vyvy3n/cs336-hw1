@@ -17,6 +17,7 @@ from multiprocessing import Pool, cpu_count
 
 # GPT-2 pre-tokenization pattern from tiktoken
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+COMPILED_PAT = regex.compile(PAT)
 
 
 def train_bpe(
@@ -51,18 +52,20 @@ def train_bpe(
     for word, _ in word_freqs.items():
         word_splits[word] = [bytes([b]) for b in word.encode("utf-8")]
 
+    pair_counts = _get_stats_bytes(word_splits, word_freqs)
+    pair_to_words = _build_pair_index(word_splits)
+
     merges: list[tuple[bytes, bytes]] = []
     max_merges = vocab_size - len(vocab)
 
     for i in range(max_merges):
-        pairs = _get_stats_bytes(word_splits, word_freqs)
-        if not pairs:
+        if not pair_counts:
             break
 
-        best_pair = max(pairs, key=lambda pair: (pairs[pair], pair))
+        best_pair = max(pair_counts, key=lambda pair: (pair_counts[pair], pair))
         merged_token = best_pair[0] + best_pair[1]
 
-        word_splits = _merge_vocab_bytes(best_pair, word_splits, merged_token)
+        _merge_vocab_bytes_with_index(best_pair, word_splits, word_freqs, pair_counts, pair_to_words, merged_token)
         merges.append(best_pair)
 
         vocab[next_token_id] = merged_token
@@ -124,20 +127,32 @@ def _process_chunk(args: tuple[str, int, int, list[str]]) -> Counter:
     if special_tokens:
         escaped_tokens = [re.escape(token) for token in special_tokens]
         special_pattern = "|".join(escaped_tokens)
-        text_chunks = re.split(f"({special_pattern})", chunk_text)
+        special_regex = re.compile(f"({special_pattern})")
     else:
-        text_chunks = [chunk_text]
+        special_regex = None
 
-    for text_chunk in text_chunks:
-        if text_chunk in special_tokens:
-            continue
-
-        if text_chunk.strip():
-            for match in regex.finditer(PAT, text_chunk):
-                token = match.group()
-                word_freqs[token] += 1
+    _process_text_chunk(chunk_text, word_freqs, special_tokens, special_regex)
 
     return word_freqs
+
+
+def _process_text_chunk(
+    text: str, word_freqs: Counter, special_tokens: list[str], special_regex: re.Pattern | None
+) -> None:
+    """Process a text chunk and update word frequencies"""
+    if special_regex:
+        text_chunks = special_regex.split(text)
+    else:
+        text_chunks = [text]
+
+    for chunk in text_chunks:
+        if chunk in special_tokens:
+            continue
+
+        if chunk.strip():
+            for match in COMPILED_PAT.finditer(chunk):
+                token = match.group()
+                word_freqs[token] += 1
 
 
 def _get_stats_bytes(word_splits: dict[str, list[bytes]], word_freqs: dict[str, int]) -> dict[tuple[bytes, bytes], int]:
@@ -161,41 +176,106 @@ def _get_stats_bytes(word_splits: dict[str, list[bytes]], word_freqs: dict[str, 
     return dict(pairs)
 
 
-def _merge_vocab_bytes(
-    pair: tuple[bytes, bytes], word_splits: dict[str, list[bytes]], merged_token: bytes
-) -> dict[str, list[bytes]]:
+def _build_pair_index(word_splits: dict[str, list[bytes]]) -> dict[tuple[bytes, bytes], set[str]]:
     """
-    Merge all occurences of a byte pair in the vocabulary.
+    Build a reverse index mapping pairs to the words that contain them.
+
+    Args:
+        word_splits: Mapping from words to their byte sequences
+
+    Returns:
+        Dictionary mapping pairs to sets of words that contain them
+    """
+    pair_to_words = defaultdict(set)
+
+    for word, symbols in word_splits.items():
+        for i in range(len(symbols) - 1):
+            pair = (symbols[i], symbols[i + 1])
+            pair_to_words[pair].add(word)
+
+    return dict(pair_to_words)
+
+
+def _merge_vocab_bytes_with_index(
+    pair: tuple[bytes, bytes],
+    word_splits: dict[str, list[bytes]],
+    word_freqs: dict[str, int],
+    pair_counts: dict[tuple[bytes, bytes], int],
+    pair_to_words: dict[tuple[bytes, bytes], set[str]],
+    merged_token: bytes,
+) -> None:
+    """
+    Merge all occurences of a byte pair using reverse index for maximum efficiency.
 
     Args:
         pair: The byte pair to merge
         word_splits: Current word splits
-        merged_token: The merged token to replace the pair with
-
-    Returns:
-        Updated word splits with the pair merged
+        word_freqs: Frequency of each word
+        pair_counts: Current pair counts
+        pair_to_words: Reverse index from pairs to words
+        merged_token: The merged token to replace pair with
     """
-    new_word_splits = {}
+    affected_words = list(pair_to_words.get(pair, set()))
 
-    for word, symbols in word_splits.items():
+    if pair in pair_counts:
+        del pair_counts[pair]
+    if pair in pair_to_words:
+        del pair_to_words[pair]
+
+    pair0, pair1 = pair
+
+    for word in affected_words:
+        old_symbols = word_splits[word]
+        freq = word_freqs[word]
+
+        for i in range(len(old_symbols) - 1):
+            old_pair = (old_symbols[i], old_symbols[i + 1])
+            if old_pair in pair_counts:
+                pair_counts[old_pair] -= freq
+                if pair_counts[old_pair] <= 0:
+                    del pair_counts[old_pair]
+
+            if old_pair in pair_to_words:
+                pair_to_words[old_pair].discard(word)
+                if not pair_to_words[old_pair]:
+                    del pair_to_words[old_pair]
+
         new_symbols = []
         i = 0
-        while i < len(symbols):
-            if i < len(symbols) - 1 and symbols[i] == pair[0] and symbols[i + 1] == pair[1]:
+        while i < len(old_symbols):
+            if i < len(old_symbols) - 1 and old_symbols[i] == pair0 and old_symbols[i + 1] == pair1:
                 new_symbols.append(merged_token)
                 i += 2
             else:
-                new_symbols.append(symbols[i])
+                new_symbols.append(old_symbols[i])
                 i += 1
-        new_word_splits[word] = new_symbols
 
-    return new_word_splits
+        word_splits[word] = new_symbols
+
+        for i in range(len(new_symbols) - 1):
+            new_pair = (new_symbols[i], new_symbols[i + 1])
+            if new_pair in pair_counts:
+                pair_counts[new_pair] += freq
+            else:
+                pair_counts[new_pair] = freq
+
+            if new_pair not in pair_to_words:
+                pair_to_words[new_pair] = set()
+            pair_to_words[new_pair].add(word)
 
 
 def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special_token: bytes) -> list[int]:
     """
     Chunk the file into parts that can be counted independently.
     May return fewer chunks if the boundaries end up overlapping.
+
+    Args:
+        file: File handle to chunk
+        desired_num_chunks: Target number of chunks
+        split_special_token: Special token to split on
+
+    Returns:
+        List of byte positions for chunk boundaries
     """
     assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
 
