@@ -6,6 +6,14 @@ def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special
     """
     Chunk the file into parts that can be counted independently.
     May return fewer chunks if the boundaries end up overlapping.
+
+    Args:
+        file: File handle to chunk
+        desired_num_chunks: Target number of chunks
+        split_special_token: Special token to split on
+
+    Returns:
+        List of byte positions for chunk boundaries
     """
     assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
 
@@ -43,15 +51,3 @@ def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special
 
     # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
     return sorted(set(chunk_boundaries))
-
-
-## Usage
-with open(..., "rb") as f:
-    boundaries = find_chunk_boundaries(f, num_processes, "<|endoftext|>".encode("utf-8"))
-
-    # The following is a serial implementation, but you can parallelize this
-    # by sending each start/end pair to a set of processes.
-    for start, end in zip(boundaries[:-1], boundaries[1:]):
-        f.seek(start)
-        chunk = f.read(end - start).decode("utf-8", errors="ignore")
-        # Run pre-tokenization on your chunk and store the counts for each pre-token
