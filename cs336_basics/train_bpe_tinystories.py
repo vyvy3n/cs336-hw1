@@ -2,13 +2,13 @@
 Script to train BPE tokenizer on TinyStories dataset.
 """
 
+import cProfile
 import json
 import pickle
-import time
-import tracemalloc
-import cProfile
 import pstats
+import time
 import traceback
+import tracemalloc
 from pathlib import Path
 from typing import Any
 
