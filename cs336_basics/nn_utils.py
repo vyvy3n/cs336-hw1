@@ -437,3 +437,123 @@ def scaled_dot_product_attention(
     attention_weights = softmax(scores, dim=-1)
     output = torch.einsum("...qk,...kv->...qv", attention_weights, V)
     return output
+
+
+class MultiHeadSelfAttention(nn.Module):
+    """
+    Causal Multi-Head Self-Attention mechanism.
+
+    This implementation follows the multi-head attention design from "Attention Is All You Need"
+    (Vaswani et al., 2017) with causal masking to prevent attending to future tokens.
+
+    The attention mechanism allows each position to attend to all positions up to and
+    including itself, which is essential for autoregressive language modeling.
+
+    Formula: MultiHeadSelfAttention(x) = W_O * MultiHead(W_Q x, W_K x, W_V x)
+    where MultiHead(Q, K, V) = Concat(head_1, ..., head_h)
+    and head_i = Attention(Q_i, K_i, V_i)
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
+        """
+        Initialize the Multi-Head Self-Attention layer.
+
+        Args:
+            d_model: Dimensionality of the model (input/output dimension)
+            num_heads: Number of attention heads
+            device: Device to store parameters on
+            dtype: Data type for parameters
+        """
+        super().__init__()
+
+        assert d_model % num_heads == 0, f"d_model ({d_model}) must be divisible by num_heads ({num_heads})"
+
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads  # Dimension per head (d_k = d_v)
+        self.d_v = d_model // num_heads
+
+        factory_kwargs = {"device": device, "dtype": dtype}
+
+        # Linear projections for all heads combined
+        self.q_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.k_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.v_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.output_proj = Linear(d_model, d_model, **factory_kwargs)
+
+    def forward(
+        self,
+        x: Float[torch.Tensor, "... seq_len d_model"],
+        rope: RotaryPositionalEmbedding | None = None,
+        token_positions: Int[torch.Tensor, "... seq_len"] | None = None,
+    ) -> Float[torch.Tensor, "... seq_len d_model"]:
+        """
+        Apply causal multi-head self-attention to input.
+
+        Args:
+            x: Input tensor of shape (..., seq_len, d_model)
+            rope: Optional RoPE module for positional encoding
+            token_positions: Token positions for RoPE (required if rope is provided)
+
+        Returns:
+            Output tensor of same shape as input
+        """
+        # Get batch dimensions and sequence length
+        *batch_dims, seq_len, d_model = x.shape
+        batch_size = 1
+        for dim in batch_dims:
+            batch_size *= dim
+
+        # Project to Q, K, V for all heads at once
+        Q = self.q_proj(x)
+        K = self.k_proj(x)
+        V = self.v_proj(x)
+
+        # Reshape to separate heads
+        Q = Q.view(*batch_dims, seq_len, self.num_heads, self.d_k)
+        K = K.view(*batch_dims, seq_len, self.num_heads, self.d_k)
+        V = V.view(*batch_dims, seq_len, self.num_heads, self.d_v)
+
+        # Transpose to put heads in batch dimension
+        Q = Q.transpose(-3, -2)
+        K = K.transpose(-3, -2)
+        V = V.transpose(-3, -2)
+
+        if rope is not None and token_positions is not None:
+            original_q_shape = Q.shape
+            original_k_shape = K.shape
+
+            # Flatten batch and head dimensions for RoPE application
+            Q_flat = Q.reshape(-1, seq_len, self.d_k)
+            K_flat = K.reshape(-1, seq_len, self.d_k)
+
+            # Expand token_positions to match the flattened batch*head dimension
+            pos_expanded = token_positions.unsqueeze(-2)
+            pos_expanded = pos_expanded.expand(*batch_dims, self.num_heads, seq_len)
+            pos_flat = pos_expanded.reshape(-1, seq_len)
+
+            Q_flat = rope(Q_flat, pos_flat)
+            K_flat = rope(K_flat, pos_flat)
+
+            Q = Q_flat.reshape(original_q_shape)
+            K = K_flat.reshape(original_k_shape)
+
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool, device=x.device), diagonal=1)
+        causal_mask = ~causal_mask
+
+        attn_output = scaled_dot_product_attention(Q, K, V, mask=causal_mask)
+        attn_output = attn_output.transpose(-3, -2)
+        attn_output = attn_output.reshape(*batch_dims, seq_len, self.d_model)
+
+        output = self.output_proj(attn_output)
+        return output
+
+    def extra_repr(self) -> str:
+        """String representation for debugging."""
+        return f"d_model={self.d_model}, num_heads={self.num_heads}, d_k={self.d_k}"
