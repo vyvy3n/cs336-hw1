@@ -124,3 +124,63 @@ class Embedding(nn.Module):
     def extra_repr(self):
         """String representation for debugging."""
         return f"num_embeddings={self.num_embeddings}, embedding_dim={self.embedding_dim}"
+
+
+class RMSNorm(nn.Module):
+    """
+    Root Mean Square Layer Normalization.
+
+    RMSNorm normalizes the input by its root mean square and applies a learnable
+    elementwise affine transformation. Unlike LayerNorm, RMSNorm does not center
+    the input by subtracting the mean.
+
+    Paper: "Root Mean Square Layer Normalization" (Zhang and Sennrich, 2019)
+    Formula: RMSNorm(x) = (x / RMS(x)) * weight
+    where RMS(x) = sqrt(mena(x^2) + eps)
+    """
+
+    def __init__(
+        self, d_model: int, eps: float = 1e-5, device: torch.device | None = None, dtype: torch.device | None = None
+    ) -> None:
+        """
+        Initialize the RMSNorm layer.
+
+        Args:
+            d_model: Hidden dimension of the model (size of the feature dimension)
+            eps: Small constant added to denominator for numerical stability
+            device: Device to store parameters on
+            dtype: Data type for parameters
+        """
+        super().__init__()
+
+        self.d_model = d_model
+        self.eps = eps
+
+        factory_kwargs = {"device": device, "dtype": dtype}
+        self.weight = nn.Parameter(torch.ones(d_model, **factory_kwargs))
+
+    def forward(self, x: Float[torch.Tensor, "... d_model"]) -> Float[torch.Tensor, "... d_model"]:
+        """
+        Apply RMSNorm to the input tensor.
+
+        Args:
+            x: Input tensor of shape (..., d_model) where ... can be any number
+                of batch dimensions (e.g., batch_size, sequence_length, d_model)
+
+        Returns:
+            Output tensor of the same shape as input with RMSNorm applied
+        """
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+
+        mean_squared = torch.mean(x.pow(2), dim=-1, keepdim=True)
+        rms = torch.sqrt(mean_squared + self.eps)
+
+        normalized = x / rms
+        result = normalized * self.weight
+
+        return result.to(in_dtype)
+
+    def extra_repr(self) -> str:
+        """String representation for debugging."""
+        return f"d_model={self.d_model}, eps={self.eps}"
