@@ -257,3 +257,109 @@ class SwiGLU(nn.Module):
     def extra_repr(self) -> str:
         """String representation for debugging."""
         return f"d_model={self.d_model}, d_ff={self.d_ff}"
+
+
+class RotaryPositionalEmbedding(nn.Module):
+    """
+    Rotary Position Embedding (RoPE) implementation.
+
+    RoPE applies rotation to pairs of embedding dimensions based on their position
+    in the sequence. This provide relative positional information without requiring
+    absolute positional embeddings.
+
+    Paper: "RoFormer: Enhanced Transformer with Rotary Position Embedding" (Su et al, 2021)
+
+    The rotation angle for position i and dimension pair k is:
+    θ_{i,k} = i / Θ^{2k/d_k}
+
+    The rotation matrix for each pair is
+    R^k_i = [cos(θ_{i,k})  -sin(θ_{i,k})]
+            [sin(θ_{i,k})   cos(θ_{i,k})]
+    """
+
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device: torch.device | None = None) -> None:
+        """
+        Initialize the RoPE module.
+
+        Args:
+            theta: θ value for RoPE (typically 10000)
+            d_k: Dimension of query and key vectors
+            max_seq_len: Maximum sequence length for precomputing values
+            device: Device to store buffers on
+        """
+        super().__init__()
+
+        self.theta = theta
+        self.d_k = d_k
+        self.max_seq_len = max_seq_len
+
+        assert d_k % 2 == 0, f"d_k must be even, got {d_k}"
+
+        # Precompute cos and sin values for all positions and dimension pairs
+        # θ_{i,k} = i / Θ^{2k/d_k} for k ∈ {1, ..., d_k/2}
+
+        # Create dimension indices: k ∈ {0, 1, 2, ..., d_k/2 - 1}
+        # This corresponds to dimension pairs: (0,1), (2,3), (4,5), ...
+        dim_indices = torch.arange(0, d_k // 2, dtype=torch.float32)
+
+        # Compute frequency for each dimension pair: 1 / Θ^{2k/d_k}
+        # Note: 2k/d_k = 2*k/d_k where k goes from 0 to d_k/2-1
+        frequencies = 1.0 / (theta ** (2.0 * dim_indices / d_k))
+
+        # Create position indices: i ∈ {0, 1, 2, ..., max_seq_len-1}
+        positions = torch.arange(max_seq_len, dtype=torch.float32)
+
+        # Compute all angles: θ_{i,k} = i * frequency_k
+        # Shape: (max_seq_len, d_k//2)
+        angles = torch.outer(positions, frequencies)
+
+        # Precompute cos and sin values
+        # Shape: (max_seq_len, d_k//2)
+        cos_values = torch.cos(angles)
+        sin_values = torch.sin(angles)
+
+        self.register_buffer("cos_values", cos_values.to(device), persistent=False)
+        self.register_buffer("sin_values", sin_values.to(device), persistent=False)
+
+    def forward(
+        self,
+        x: Float[torch.Tensor, "... seq_len d_k"],
+        token_positions: Int[torch.Tensor, "... seq_len"],
+    ) -> Float[torch.Tensor, "... seq_len d_k"]:
+        """
+        Apply rotary position embedding to input tensor.
+
+        Args:
+            x: Input tensor with arbitrary batch dimensions (..., seq_len, d_k)
+            token_positions: Position indices for each token (..., seq_len)
+                           Values should be in range [0, max_seq_len)
+
+        Returns:
+            Output tensor with same shape as input but with RoPE applied
+        """
+        cos_vals = self.cos_values[token_positions]
+        sin_vals = self.sin_values[token_positions]
+
+        x_even = x[..., 0::2]
+        x_odd = x[..., 1::2]
+
+        # Apply rotation transformation
+        # For each pair (x_even[k], x_odd[k]), apply rotation matrix:
+        # [x_new_even[k]] = [cos(θ)  -sin(θ)] [x_even[k]]
+        # [x_new_odd[k] ]   [sin(θ)   cos(θ)] [x_odd[k] ]
+        #
+        # This gives:
+        # x_new_even[k] = cos(θ) * x_even[k] - sin(θ) * x_odd[k]
+        # x_new_odd[k]  = sin(θ) * x_even[k] + cos(θ) * x_odd[k]
+        x_new_even = cos_vals * x_even - sin_vals * x_odd
+        x_new_odd = sin_vals * x_even + cos_vals * x_odd
+
+        output = torch.zeros_like(x)
+        output[..., 0::2] = x_new_even
+        output[..., 1::2] = x_new_odd
+
+        return output
+
+    def extra_repr(self) -> str:
+        """String representation for debugging."""
+        return f"theta={self.theta}, d_k={self.d_k}, max_seq_len={self.max_seq_len}"
