@@ -363,3 +363,32 @@ class RotaryPositionalEmbedding(nn.Module):
     def extra_repr(self) -> str:
         """String representation for debugging."""
         return f"theta={self.theta}, d_k={self.d_k}, max_seq_len={self.max_seq_len}"
+
+
+def softmax(input: Float[torch.Tensor, "..."], dim: int) -> Float[torch.Tensor, "..."]:
+    """
+    Apply softmax function to the specified dimension of the input tensor.
+
+    This implementation uses the numerically stable version that subtracts the maximum
+    value from the input before applying exponential to prevent overflow.
+
+    Formula: softmax(x_i) = exp(x_i - max(x)) / sum_j(exp(x_j - max(x)))
+
+    Args:
+        input: Input tensor with arbitrary shape
+        dim: Dimension along which to apply softmax. The resulting tensor
+             will have the same shape as input, but the specified dimension
+             will be normalized to sum to 1.
+
+    Returns:
+        Output tensor with same shape as input, with softmax applied along
+        the specified dimension
+    """
+    max_vals = torch.max(input, dim=dim, keepdim=True)[0]
+    input_stable = input - max_vals
+
+    exp_vals = torch.exp(input_stable)
+    sum_exp = torch.sum(exp_vals, dim=dim, keepdim=True)
+
+    softmax_output = exp_vals / sum_exp
+    return softmax_output
