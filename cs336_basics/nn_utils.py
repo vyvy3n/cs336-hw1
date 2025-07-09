@@ -392,3 +392,48 @@ def softmax(input: Float[torch.Tensor, "..."], dim: int) -> Float[torch.Tensor, 
 
     softmax_output = exp_vals / sum_exp
     return softmax_output
+
+
+def scaled_dot_product_attention(
+    Q: Float[torch.Tensor, "... n_queries d_k"],
+    K: Float[torch.Tensor, "... n_keys d_k"],
+    V: Float[torch.Tensor, "... n_values d_v"],
+    mask: Float[torch.Tensor, "... n_queries n_key"] | None = None,
+) -> Float[torch.Tensor, "... n_queries d_v"]:
+    """
+    Scaled Dot-Product Attention mechanism.
+
+    Computes attention weights between queries and keys, then uses these weights
+    to compute a weighted average of the values. This is the core operation used
+    in multi-headed attention layers.
+
+    Paper: "Attention Is All You Need (Vaswani et al. 2017)"
+    Formula: Attention(Q, K, V) = softmax(Q^T K / sqrt(d_k)) V
+
+    Note: For column vectors, the formula becomes softmax(Q K^T / sqrt(d_k)) V
+    due to PyTorch's row-major memory layout.
+
+    Args:
+        Q: Query tensor of shape (..., n_queries, d_k) where ... represents
+           arbitrary batch dimensions (e.g., batch_size, num_heads)
+        K: Key tensor of shape (..., n_keys, d_k) with same batch dimensions as Q
+        V: Value tensor of shape (..., n_values, d_v) where n_values == n_keys
+           and batch dimension match Q and K
+        mask: Optional boolean mask of shape (..., n_queries, n_keys).
+              True means attention is allowed, False means attention is blocked.
+              When False, the attention score will be set to -inf before softmax.
+
+    Returns:
+        Output tensor with shape (..., n_queries, d_v) with same batch dimensions
+        as input tensors
+    """
+    d_k = Q.shape[-1]
+
+    # Compute attention scores: Q K^T / sqrt(d_k)
+    scores = torch.einsum("...qd,...kd->...qk", Q, K) / math.sqrt(d_k)
+    if mask is not None:
+        scores = scores.masked_fill(~mask, float("-inf"))
+
+    attention_weights = softmax(scores, dim=-1)
+    output = torch.einsum("...qk,...kv->...qv", attention_weights, V)
+    return output
