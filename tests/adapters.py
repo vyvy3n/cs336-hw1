@@ -18,6 +18,7 @@ from cs336_basics.nn_utils import (
     RotaryPositionalEmbedding,
     SwiGLU,
     TransformerBlock,
+    TransformerLM,
     scaled_dot_product_attention,
     softmax,
 )
@@ -431,7 +432,40 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    model = TransformerLM(
+        vocab_size=vocab_size,
+        context_length=context_length,
+        d_model=d_model,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        rope_theta=rope_theta,
+        device=in_indices.device,
+        dtype=torch.float32,
+    )
+
+    with torch.no_grad():
+        model.token_embeddings.weight.copy_(weights["token_embeddings.weight"])
+
+        for layer_idx in range(num_layers):
+            layer = model.layers[layer_idx]
+
+            layer.attn.q_proj.weight.copy_(weights[f"layers.{layer_idx}.attn.q_proj.weight"])
+            layer.attn.k_proj.weight.copy_(weights[f"layers.{layer_idx}.attn.k_proj.weight"])
+            layer.attn.v_proj.weight.copy_(weights[f"layers.{layer_idx}.attn.v_proj.weight"])
+            layer.attn.output_proj.weight.copy_(weights[f"layers.{layer_idx}.attn.output_proj.weight"])
+
+            layer.ln1.weight.copy_(weights[f"layers.{layer_idx}.ln1.weight"])
+            layer.ln2.weight.copy_(weights[f"layers.{layer_idx}.ln2.weight"])
+
+            layer.ffn.w1.weight.copy_(weights[f"layers.{layer_idx}.ffn.w1.weight"])
+            layer.ffn.w2.weight.copy_(weights[f"layers.{layer_idx}.ffn.w2.weight"])
+            layer.ffn.w3.weight.copy_(weights[f"layers.{layer_idx}.ffn.w3.weight"])
+
+        model.ln_final.weight.copy_(weights["ln_final.weight"])
+        model.lm_head.weight.copy_(weights["lm_head.weight"])
+
+    return model(in_indices)
 
 
 def run_rmsnorm(
