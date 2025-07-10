@@ -557,3 +557,84 @@ class MultiHeadSelfAttention(nn.Module):
     def extra_repr(self) -> str:
         """String representation for debugging."""
         return f"d_model={self.d_model}, num_heads={self.num_heads}, d_k={self.d_k}"
+
+
+class TransformerBlock(nn.Module):
+    """
+    Pre-norm Transformer block with multi-head attention and SwiGLU feed-forward.
+
+    This implementation follows the pre-norm design where layer normalization is applied
+    before each sublayer (attention and feed-forward) rather than after. This design
+    has been shown to improve training stability and is used in mordern language models.
+
+    Architecture
+    1. z = x + MultiHeadSelfAttention(RMSNorm(x))
+    2. y = z + SwiGLU(RMSNorm(z))
+
+    Paper: "On Layer Normalization in the Transformer Architecture" (Xiong et.al., 2020)
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        eps: float = 1e-5,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
+        """
+        Initialize the Transformer block.
+
+        Args:
+            d_model: Dimensionality of the model (input/output dimension)
+            num_heads: Number of attention heads
+            d_ff: Dimensionality of the feed-forward inner layer
+            eps: Epsilon value for RMSNorm numerical stability
+            device: Device to store parameters on
+            dtype: Data type for parameters
+        """
+        super().__init__()
+
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+
+        factory_kwargs = {"device": device, "dtype": dtype}
+
+        self.attn = MultiHeadSelfAttention(d_model, num_heads, **factory_kwargs)
+        self.ln1 = RMSNorm(d_model, eps, **factory_kwargs)
+
+        self.ffn = SwiGLU(d_model, d_ff, **factory_kwargs)
+        self.ln2 = RMSNorm(d_model, eps, **factory_kwargs)
+
+    def forward(
+        self,
+        x: Float[torch.Tensor, "... seq_len d_model"],
+        rope: RotaryPositionalEmbedding | None = None,
+        token_positions: Int[torch.Tensor, "... seq_len"] | None = None,
+    ) -> Float[torch.Tensor, "... seq_len d_model"]:
+        """
+        Apply the Transformer block to input.
+
+        Args:
+            x: Input tensor of shape (..., seq_len, d_model)
+            rope: Optional RoPE module for positional encoding
+            token_positions: Token positions for RoPE (required if rope is provided)
+
+        Returns:
+            Output tensor of same shape as input
+        """
+        normalized_x = self.ln1(x)
+        attn_output = self.attn(normalized_x, rope=rope, token_positions=token_positions)
+        z = x + attn_output
+
+        normalized_z = self.ln2(z)
+        ffn_output = self.ffn(normalized_z)
+        y = z + ffn_output
+
+        return y
+
+    def extra_repr(self) -> str:
+        """String representation for debugging."""
+        return f"d_model={self.d_model}, num_heads={self.num_heads}, d_ff={self.d_ff}"
