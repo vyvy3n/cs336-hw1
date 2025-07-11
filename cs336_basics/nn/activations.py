@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from jaxtyping import Float
+from jaxtyping import Float, Int
 
 from cs336_basics.nn.layers import Linear
 
@@ -111,3 +111,49 @@ def softmax(input: Float[torch.Tensor, "..."], dim: int) -> Float[torch.Tensor, 
 
     softmax_output = exp_vals / sum_exp
     return softmax_output
+
+
+def cross_entropy(
+    logits: Float[torch.Tensor, "... vocab_size"], targets: Int[torch.Tensor, "..."]
+) -> Float[torch.Tensor, ""]:
+    """
+    Compute cross-entropy loss with numerical stability.
+
+    This implementation avoids explicitly computing softmax probabilities by using
+    the log-sum-exp trick to prevent numerical overflow and underflow.
+
+    The cross-entropy loss is computed as:
+    CE = -log(softmax(logits)[target])
+       = -log(exp(logits[target] - max(logits)) / sum(exp(logits - max(logits))))
+       = -(logits[target] - max(logits)) + log(sum(exp(logits - max(logits))))
+       = -logits[target] + log_sum_exp(logits)
+
+    Args:
+        logits: Unnormalized log probabilities with shape (..., vocab_size)
+                where ... represents arbitrary batch dimensions
+        targets: Target class indices with shape (...) mathcing the batch dimensions
+                 of logits. Each value must be in [0, vocab_size-1]
+
+    Returns:
+        Scalar tensor containing the mean cross-entropy loss across all examples
+    """
+    vocab_size = logits.shape[-1]
+
+    logits_flat = logits.view(-1, vocab_size)
+    targets_flat = targets.view(-1)
+    batch_size = logits_flat.shape[0]
+
+    max_logits = torch.max(logits_flat, dim=1, keepdim=True)[0]
+    logits_stable = logits_flat - max_logits
+
+    exp_logits = torch.exp(logits_stable)
+    sum_exp = torch.sum(exp_logits, dim=1, keepdim=True)
+    log_sum_exp = torch.log(sum_exp)
+
+    batch_indices = torch.arange(batch_size, device=logits.device)
+    target_logits = logits_stable[batch_indices, targets_flat]
+
+    cross_entropy_losses = -target_logits + log_sum_exp.squeeze(1)
+
+    mean_loss = torch.mean(cross_entropy_losses)
+    return mean_loss
