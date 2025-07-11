@@ -21,7 +21,7 @@ from cs336_basics.nn.models import (
     TransformerBlock,
     TransformerLM,
 )
-from cs336_basics.optimizer import AdamW
+from cs336_basics.optimizer import AdamW, cosine_learning_rate_schedule
 from cs336_basics.tokenization.bpe import train_bpe
 from cs336_basics.tokenization.tokenizer import Tokenizer
 
@@ -610,7 +610,13 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    return cosine_learning_rate_schedule(
+        iteration=it,
+        max_learning_rate=max_learning_rate,
+        min_learning_rate=min_learning_rate,
+        warmup_iters=warmup_iters,
+        cosine_cycle_iters=cosine_cycle_iters,
+    )
 
 
 def run_save_checkpoint(

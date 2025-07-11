@@ -119,3 +119,57 @@ class AdamW(Optimizer):
                     p.data.mul_(1.0 - lr * weight_decay)
 
         return loss
+
+
+def cosine_learning_rate_schedule(
+    iteration: int, max_learning_rate: float, min_learning_rate: float, warmup_iters: int, cosine_cycle_iters: int
+) -> float:
+    """
+    Compute the learnig rate for a given iteration using cosine annealing with warmup.
+
+    This implements the cosine learning rate schedule:
+    - Warm-up phase: Linear increase from 0 to max_learning_rate
+    - Cosine annealing phase: Cosine decay from max_learning to min_learning_rate
+    - Post-annealing phase: Constant at min_learning_rate
+
+    Args:
+        iteration: Current iteration number (0-indexed)
+        max_learning_rate: Maximum learning_rate (α_max)
+        min_learning_rate: Minimum learning_rate (α_max)
+        warmup_iters: Number of warmup iterations (T_w)
+        cosine_cycle_iters: Total number of cosine cycle iterations (T_c)
+
+    Returns:
+        Learning rate for the given iteration
+
+    Raises:
+        ValueError: If any parameter is invalid
+    """
+    if iteration < 0:
+        raise ValueError(f"Iteration must be non-negative, got {iteration}")
+    if max_learning_rate < 0:
+        raise ValueError(f"Max learning rate must be non-negative, got {max_learning_rate}")
+    if min_learning_rate < 0:
+        raise ValueError(f"Min learning rate must be non-negative, got {min_learning_rate}")
+    if warmup_iters < 0:
+        raise ValueError(f"Warmup iterations must be non-negative, got {warmup_iters}")
+    if cosine_cycle_iters < warmup_iters:
+        raise ValueError(
+            f"Cosine cycle iterations ({cosine_cycle_iters}) must be >= warmup iterations ({warmup_iters})"
+        )
+
+    if iteration < warmup_iters:
+        if warmup_iters == 0:
+            return max_learning_rate
+        return (iteration / warmup_iters) * max_learning_rate
+
+    elif iteration <= cosine_cycle_iters:
+        if cosine_cycle_iters == warmup_iters:
+            return min_learning_rate
+
+        progress = (iteration - warmup_iters) / (cosine_cycle_iters - warmup_iters)
+        cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return min_learning_rate + cosine_factor * (max_learning_rate - min_learning_rate)
+
+    else:
+        return min_learning_rate
