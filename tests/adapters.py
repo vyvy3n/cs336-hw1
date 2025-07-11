@@ -9,6 +9,7 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 from bpe.regex_tokenizer import RegexTokenizer
+from bpe.pre_tokenizer import run_pre_tokenization
 
 
 def run_linear(
@@ -562,7 +563,16 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    raise NotImplementedError
+    tokenizer = RegexTokenizer()
+    tokenizer.vocab = vocab
+    # bytes -> int
+    inverse_vocab = {v: k for k, v in vocab.items}
+    # (int, int) -> int
+    tokenizer.merges = {
+        (inverse_vocab[token1], inverse_vocab[token2]): 256 + len(tokenizer.merges)
+        for token1, token2 in merges
+    }
+    return tokenizer
 
 
 def run_train_bpe(
@@ -592,13 +602,13 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-
     tokenizer = RegexTokenizer()
     tokenizer.add_special_tokens(special_tokens)
-    tokenizer.train(
-        "",
-        vocab_size,
+    # Dict[Tuple[int, ...], int]
+    ids_to_count = run_pre_tokenization(
+        input_path=input_path, tokenizer=tokenizer, special_tokens=special_tokens
     )
+    tokenizer.train(vocab_size=vocab_size, global_subword_count=ids_to_count, verbose=False)
     return tokenizer.vocab, [
         (tokenizer.vocab[merge[0]], tokenizer.vocab[merge[1]])
         for merge in tokenizer.merges
