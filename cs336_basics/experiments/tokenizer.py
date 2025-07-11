@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cs336_basics.bpe_tokenizer import Tokenizer
+from cs336_basics.tokenization.tokenizer import Tokenizer
 
 
 def sample_documents_from_file(

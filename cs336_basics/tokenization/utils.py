@@ -1,3 +1,7 @@
+"""
+Pretokenization utilities.
+"""
+
 import os
 from typing import BinaryIO
 
