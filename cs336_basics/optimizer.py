@@ -173,3 +173,42 @@ def cosine_learning_rate_schedule(
 
     else:
         return min_learning_rate
+
+
+def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
+    """
+    Clip gradients to have L2 norm at most max_l2_norm.
+
+    This function implements gradient clipping.
+    Given the gradient for all parameters g, we compute its L2-norm ||g||_2.
+    If this norm is less than max_l2_norm, we leave g as is; otherwise, we scale
+    g down by a factor of max_l2_norm / (||g||_2 + ε) where ε = 1e-6.
+
+    Args:
+        parameters: Iterable of parameters whose gradients should be clipped
+        max_l2_norm: Maximum L2 norm allowed for the combined gradients
+
+    Note:
+        This function modified the parameter gradients in-place.
+    """
+    if max_l2_norm <= 0:
+        raise ValueError(f"max_l2_norm must be positive, got {max_l2_norm}")
+
+    gradients = []
+    for param in parameters:
+        if param.grad is not None:
+            gradients.append(param.grad.data)
+
+    if not gradients:
+        return
+
+    total_norm_squared = torch.sum(torch.stack([torch.sum(g * g) for g in gradients]))
+    total_norm = torch.sqrt(total_norm_squared)
+
+    eps = 1e-6
+
+    if total_norm > max_l2_norm:
+        clip_coef = max_l2_norm / (total_norm + eps)
+        for param in parameters:
+            if param.grad is not None:
+                param.grad.data.mul_(clip_coef)
