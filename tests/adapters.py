@@ -21,7 +21,7 @@ from cs336_basics.nn.models import (
     TransformerBlock,
     TransformerLM,
 )
-from cs336_basics.optimizer import AdamW, cosine_learning_rate_schedule
+from cs336_basics.optimizer import AdamW, cosine_learning_rate_schedule, gradient_clipping
 from cs336_basics.tokenization.bpe import train_bpe
 from cs336_basics.tokenization.tokenizer import Tokenizer
 
@@ -575,7 +575,7 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    gradient_clipping(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> type[torch.optim.Optimizer]:
