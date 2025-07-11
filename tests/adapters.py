@@ -21,6 +21,7 @@ from cs336_basics.nn.models import (
     TransformerBlock,
     TransformerLM,
 )
+from cs336_basics.optimizer import AdamW
 from cs336_basics.tokenization.bpe import train_bpe
 from cs336_basics.tokenization.tokenizer import Tokenizer
 
@@ -581,7 +582,7 @@ def get_adamw_cls() -> type[torch.optim.Optimizer]:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(

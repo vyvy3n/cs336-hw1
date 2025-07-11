@@ -37,7 +37,7 @@ class SGD(torch.optim.Optimizer):
         defaults = {"lr": lr}
         super().__init__(params, defaults)
 
-    def step(self, closure: Callable | None = None) -> torch.Tensor | None:
+    def step(self, closure: Callable[[], torch.Tensor] | None = None) -> torch.Tensor | None:
         """
         Perform a single optimization step.
 
