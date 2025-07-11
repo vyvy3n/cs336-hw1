@@ -12,7 +12,7 @@ import tracemalloc
 from pathlib import Path
 from typing import Any
 
-from cs336_basics.bpe_tokenizer import train_bpe
+from cs336_basics.tokenization.bpe import train_bpe
 
 
 def train_bpe_on_openwebtext() -> dict[str, Any]:

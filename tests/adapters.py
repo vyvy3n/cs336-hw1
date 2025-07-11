@@ -9,8 +9,9 @@ import torch
 from jaxtyping import Float, Int
 from torch import Tensor
 
-from cs336_basics.bpe_tokenizer import Tokenizer, train_bpe
-from cs336_basics.nn_utils import (
+from cs336_basics.nn.activations import softmax
+from cs336_basics.nn.attention import scaled_dot_product_attention
+from cs336_basics.nn.models import (
     Embedding,
     Linear,
     MultiHeadSelfAttention,
@@ -19,9 +20,9 @@ from cs336_basics.nn_utils import (
     SwiGLU,
     TransformerBlock,
     TransformerLM,
-    scaled_dot_product_attention,
-    softmax,
 )
+from cs336_basics.tokenization.bpe import train_bpe
+from cs336_basics.tokenization.tokenizer import Tokenizer
 
 
 def run_linear(
