@@ -10,6 +10,14 @@ from jaxtyping import Float, Int
 from torch import Tensor
 
 from cs336_basics.data import get_batch
+from cs336_basics.experiments.decoding import (
+    GreedyDecoding,
+    MultinomialDecoding,
+    TopPDecoding,
+    compute_perplexity,
+    decode_text,
+    generate_completions,
+)
 from cs336_basics.nn.activations import cross_entropy, softmax
 from cs336_basics.nn.attention import scaled_dot_product_attention
 from cs336_basics.nn.models import (
@@ -717,3 +725,146 @@ def run_train_bpe(
                 Merges are ordered by order of creation.
     """
     return train_bpe(str(input_path), vocab_size, special_tokens)
+
+
+def run_decode_text(
+    model: torch.nn.Module,
+    tokenizer: Any,
+    prompt: str,
+    max_new_tokens: int = 50,
+    temperature: float = 1.0,
+    top_p: float | None = None,
+    end_token: str = "<|endoftext|>",
+    device: str = "cpu",
+) -> str:
+    """
+    Generate text completion for a given prompt using a trained Transformer language model.
+
+    Args:
+        model: Trained TransformerLM model
+        tokenizer: Tokenizer for encoding/decoding text
+        prompt: Input text prompt to complete
+        max_new_tokens: Maximum number of new tokens to generate
+        temperature: Temperature for sampling
+        top_p: If provided, use top-p sampling with this threshold
+        end_token: Token that signals the end of generation
+        device: Device to run inference on
+
+    Returns:
+        Generated text completion
+    """
+    return decode_text(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        end_token=end_token,
+        device=device,
+    )
+
+
+def run_compute_perplexity(
+    model: torch.nn.Module,
+    tokenizer: Any,
+    text: str,
+    device: str = "cpu",
+) -> float:
+    """
+    Compute perplexity of a text sequence under the model.
+
+    Args:
+        model: Trained TransformerLM model
+        tokenizer: Tokenizer for encoding text
+        text: Input text to compute perplexity for
+        device: Device to run inference on
+
+    Returns:
+        Perplexity value
+    """
+    return compute_perplexity(model, tokenizer, text, device)
+
+
+def run_generate_completions(
+    model: torch.nn.Module,
+    tokenizer: Any,
+    prompts: list[str],
+    max_new_tokens: int = 50,
+    temperature: float = 1.0,
+    top_p: float | None = None,
+    end_token: str = "<|endoftext|>",
+    device: str = "cpu",
+) -> list[str]:
+    """
+    Generate completions for multiple prompts.
+
+    Args:
+        model: Trained TransformerLM model
+        tokenizer: Tokenizer for encoding/decoding text
+        prompts: List of input text prompts to complete
+        max_new_tokens: Maximum number of new tokens to generate per prompt
+        temperature: Temperature for sampling
+        top_p: If provided, use top-p sampling with this threshold
+        end_token: Token that signals the end of generation
+        device: Device to run inference on
+
+    Returns:
+        List of generated completions
+    """
+    return generate_completions(
+        model=model,
+        tokenizer=tokenizer,
+        prompts=prompts,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        end_token=end_token,
+        device=device,
+    )
+
+
+def run_greedy_decoding_sample(logits: Float[Tensor, " vocab_size"], temperature: float = 1.0) -> int:
+    """
+    Sample using greedy decoding strategy.
+
+    Args:
+        logits: Raw logits from the model
+        temperature: Temperature parameter (ignored for greedy)
+
+    Returns:
+        Sampled token ID
+    """
+    decoder = GreedyDecoding()
+    return decoder.sample(logits, temperature)
+
+
+def run_multinomial_decoding_sample(logits: Float[Tensor, " vocab_size"], temperature: float = 1.0) -> int:
+    """
+    Sample using multinomial decoding strategy.
+
+    Args:
+        logits: Raw logits from the model
+        temperature: Temperature parameter for scaling
+
+    Returns:
+        Sampled token ID
+    """
+    decoder = MultinomialDecoding()
+    return decoder.sample(logits, temperature)
+
+
+def run_top_p_decoding_sample(logits: Float[Tensor, " vocab_size"], p: float = 0.9, temperature: float = 1.0) -> int:
+    """
+    Sample using top-p (nucleus) decoding strategy.
+
+    Args:
+        logits: Raw logits from the model
+        p: Cumulative probability threshold
+        temperature: Temperature parameter for scaling
+
+    Returns:
+        Sampled token ID
+    """
+    decoder = TopPDecoding(p=p)
+    return decoder.sample(logits, temperature)

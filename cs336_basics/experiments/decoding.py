@@ -234,21 +234,23 @@ def compute_perplexity(
     num_tokens = 0
 
     with torch.no_grad():
-        for start_idx in range(0, len(input_ids) - 1, model.context_length):
+        for start_idx in range(0, len(input_ids), model.context_length):
             end_idx = min(start_idx + model.context_length, len(input_ids))
 
             input_chunk = input_tensor[:, start_idx:end_idx]
-            target_chunk = input_tensor[:, start_idx + 1 : end_idx + 1]
 
-            if input_chunk.size(1) == 0:
+            if input_chunk.size(1) < 2:
                 break
 
             logits = model(input_chunk)
 
-            loss = F.cross_entropy(logits.view(-1, model.vocab_size), target_chunk.view(-1), reduction="sum")
+            input_logits = logits[:, :-1, :]
+            target_tokens = input_chunk[:, 1:]
+
+            loss = F.cross_entropy(input_logits.view(-1, model.vocab_size), target_tokens.view(-1), reduction="sum")
 
             total_loss += loss.item()
-            num_tokens += target_chunk.numel()
+            num_tokens += target_tokens.numel()
 
     avg_loss = total_loss / num_tokens
     perplexity = torch.exp(torch.tensor(avg_loss)).item()
