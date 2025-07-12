@@ -9,6 +9,7 @@ import torch
 from jaxtyping import Float, Int
 from torch import Tensor
 
+from cs336_basics.data import get_batch
 from cs336_basics.nn.activations import cross_entropy, softmax
 from cs336_basics.nn.attention import scaled_dot_product_attention
 from cs336_basics.nn.models import (
@@ -529,7 +530,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return get_batch(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
