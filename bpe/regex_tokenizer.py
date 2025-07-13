@@ -9,7 +9,6 @@ But:
 - Does not handle the regular expression splitting pattern.
 """
 
-from .tokenizer import Tokenizer
 from .merge_common_pair import (
     get_stats,
     merge,
@@ -24,14 +23,39 @@ from collections import Counter
 import operator
 
 
-class RegexTokenizer(Tokenizer):
+class RegexTokenizer:
 
     def __init__(self):
         super().__init__()
         self.pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
         self.compiled_pattern = re.compile(self.pattern)
         self.text_chunks = []
+        self.merges = {}
+        self.vocab = self._build_vocab()
 
+
+    def _build_vocab(self):
+        # The base vocab is the 256 bytes.
+        vocab = {i: bytes([i]) for i in range(256)}
+        
+        # This part handles rebuilding from existing merges if you were loading a saved tokenizer.
+        for (id1, id2), merged_id in self.merges.items():
+            vocab[merged_id] = vocab[id1] + vocab[id2]
+            
+        # The inverse vocab should always be built after the vocab is finalized.
+        self.inverse_vocab = {v: k for k, v in vocab.items()}
+        return vocab
+    
+    def add_special_tokens(self, tokens: list[str]):
+        """
+        Adds special tokens to the vocabulary in-place and rebuilds the inverse vocabulary.
+        """
+        for token in tokens:
+            # Add the new token if it doesn't already exist.
+            if token.encode("utf-8") not in self.vocab.values():
+                 self.vocab[len(self.vocab)] = token.encode("utf-8")
+        self.inverse_vocab = {v: k for k, v in self.vocab.items()}
+        
     def train(
         self,
         vocab_size: int,
