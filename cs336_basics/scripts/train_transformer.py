@@ -32,15 +32,12 @@ import wandb
 from torch.utils.tensorboard.writer import SummaryWriter
 
 from cs336_basics.data import get_batch
-from cs336_basics.nn.activations import cross_entropy
+from cs336_basics.loss.cross_entropy import cross_entropy
 from cs336_basics.nn.models import TransformerLM
-from cs336_basics.optimizer import (
-    AdamW,
-    cosine_learning_rate_schedule,
-    gradient_clipping,
-    load_checkpoint,
-    save_checkpoint,
-)
+from cs336_basics.training.checkpoint import load_checkpoint, save_checkpoint
+from cs336_basics.training.gradient_clipping import gradient_clipping
+from cs336_basics.training.lr_schedules import cosine_learning_rate_schedule
+from cs336_basics.training.optimizers import AdamW
 
 
 @dataclass

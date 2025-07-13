@@ -10,7 +10,7 @@ from jaxtyping import Float, Int
 from torch import Tensor
 
 from cs336_basics.data import get_batch
-from cs336_basics.experiments.decoding import (
+from cs336_basics.generation.decoding import (
     GreedyDecoding,
     MultinomialDecoding,
     TopPDecoding,
@@ -18,27 +18,31 @@ from cs336_basics.experiments.decoding import (
     decode_text,
     generate_completions,
 )
-from cs336_basics.nn.activations import cross_entropy, softmax
-from cs336_basics.nn.attention import scaled_dot_product_attention
-from cs336_basics.nn.models import (
+from cs336_basics.loss.cross_entropy import cross_entropy
+from cs336_basics.nn.activations import SwiGLU, softmax
+from cs336_basics.nn.attention import (
+    MultiHeadSelfAttention,
+    RotaryPositionalEmbedding,
+    scaled_dot_product_attention,
+)
+from cs336_basics.nn.layers import (
     Embedding,
     Linear,
-    MultiHeadSelfAttention,
     RMSNorm,
-    RotaryPositionalEmbedding,
-    SwiGLU,
+)
+from cs336_basics.nn.models import (
     TransformerBlock,
     TransformerLM,
 )
-from cs336_basics.optimizer import (
-    AdamW,
-    cosine_learning_rate_schedule,
-    gradient_clipping,
+from cs336_basics.tokenization.bpe import train_bpe
+from cs336_basics.tokenization.tokenizer import Tokenizer
+from cs336_basics.training.checkpoint import (
     load_checkpoint,
     save_checkpoint,
 )
-from cs336_basics.tokenization.bpe import train_bpe
-from cs336_basics.tokenization.tokenizer import Tokenizer
+from cs336_basics.training.gradient_clipping import gradient_clipping
+from cs336_basics.training.lr_schedules import cosine_learning_rate_schedule
+from cs336_basics.training.optimizers import AdamW
 
 
 def run_linear(
@@ -510,8 +514,9 @@ def run_rmsnorm(
     return rmsnorm(in_features)
 
 
+"""
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
-    """Given a tensor of inputs, return the output of applying SiLU
+    '''Given a tensor of inputs, return the output of applying SiLU
     to each element.
 
     Args:
@@ -520,8 +525,9 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
     Returns:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
-    """
-    raise NotImplementedError
+    '''
+    pass
+"""
 
 
 def run_get_batch(
