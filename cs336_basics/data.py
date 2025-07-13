@@ -33,7 +33,6 @@ def get_batch(
 
     Raises:
         ValueError: If the dataset is too short to sample sequences of the requested length.
-        RunTimeError: If the specified device is invalid or unavailable.
     """
     if len(dataset) < context_length + 1:
         raise ValueError(

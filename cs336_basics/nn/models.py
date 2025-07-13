@@ -123,7 +123,7 @@ class TransformerLM(nn.Module):
         rope_theta: float = 10000.0,
         eps: float = 1e-5,
         device: torch.device | None = None,
-        dtype: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
         """
         Initialize the Transformer Language Model.
