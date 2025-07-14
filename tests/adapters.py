@@ -514,9 +514,9 @@ def run_rmsnorm(
     return rmsnorm(in_features)
 
 
-"""
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
-    '''Given a tensor of inputs, return the output of applying SiLU
+    """
+    Given a tensor of inputs, return the output of applying SiLU
     to each element.
 
     Args:
@@ -525,9 +525,8 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
     Returns:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
-    '''
-    pass
-"""
+    """
+    raise NotImplementedError
 
 
 def run_get_batch(
