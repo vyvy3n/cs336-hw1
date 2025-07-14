@@ -10,6 +10,7 @@ import torch
 from torch import Tensor
 from bpe.regex_tokenizer import RegexTokenizer
 from bpe.pre_tokenizer import run_pre_tokenization
+from bpe.tokenizer import Tokenizer
 
 
 def run_linear(
@@ -563,16 +564,7 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    tokenizer = RegexTokenizer()
-    tokenizer.vocab = vocab
-    # bytes -> int
-    inverse_vocab = {v: k for k, v in vocab.items}
-    # (int, int) -> int
-    tokenizer.merges = {
-        (inverse_vocab[token1], inverse_vocab[token2]): 256 + len(tokenizer.merges)
-        for token1, token2 in merges
-    }
-    return tokenizer
+    return Tokenizer(vocab=vocab, merges=merges, special_tokens=special_tokens)
 
 
 def run_train_bpe(
