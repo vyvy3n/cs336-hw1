@@ -12,6 +12,7 @@ This module provides comprehensive experiment tracking capabilities including:
 
 import json
 import time
+import warnings
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -69,3 +70,240 @@ class ExperimentConfig:
                 setattr(self, key, value)
             else:
                 self.custom[key] = value
+
+
+@dataclass
+class ExperimentMetadata:
+    """Metadata for an experiment."""
+
+    experiment_id: str
+    name: str
+    description: str
+    start_time: datetime
+    end_time: datetime | None = None
+    status: str = "running"
+    tags: list[str] = field(default_factory=list)
+    notes: str = ""
+
+
+@dataclass
+class ExperimentLogger:
+    """
+    Comprehensive experiment logger for tracking ML experiments.
+
+    Features:
+    - Track metrics over training steps and wall time
+    - Log hyperparameters and experiment metadata
+    - Generate learning vurve visualizations
+    - Save/load experiemt logs
+    - Optional Weights & Biases integration.
+    """
+
+    def __init__(
+        self,
+        experiment_name: str,
+        experiment_id: str | None = None,
+        description: str = "",
+        log_dir: str | Path = "experiments",
+        use_wandb: bool = True,
+        wandb_project: str | None = None,
+        wandb_config: dict[str, Any] | None = None,
+        auto_save_interval: int = 100,
+    ):
+        """
+        Initialize experiment logger.
+
+        Args:
+            experiment_name: Human-readable name for the experiment
+            experiment_id: Unique identifier (auto-generated if None)
+            description: Description of the experiment
+            log_dir: Directory to save experiment logs
+            use_wandb: Whether to use Weights & Biases logging
+            wandb_project: W&B project name
+            wandb_config: Additional W&B configuration
+            auto_save_interval: Automatically save logs every N steps
+        """
+        self.experiment_name = experiment_name
+        self.experiment_id = experiment_id or self._generate_experiment_id()
+        self.description = description
+        self.start_time = datetime.now()
+
+        self.log_dir = Path(log_dir)
+        self.experiment_dir = self.log_dir / experiment_id
+        self.experiment_dir.mkdir(parents=True, exist_ok=True)
+
+        self.metadata = ExperimentMetadata(
+            experiment_id=self.experiment_id, name=experiment_name, description=description, start_time=self.start_time
+        )
+
+        self.config = ExperimentConfig()
+
+        self.metrics: dict[str, list[MetricPoint]] = {}
+        self.current_step = 0
+        self.start_wall_time = time.time()
+
+        self.auto_save_interval = auto_save_interval
+        self.last_save_step = 0
+
+        self.use_wandb = use_wandb
+        self.wandb_run = None
+
+        if self.use_wandb:
+            self._init_wandb(wandb_project, wandb_config)
+
+        self._save_metadata()
+
+    def _generate_experiment_id(self) -> str:
+        """
+        Generate a unique experiment ID.
+
+        Returns:
+            A string containing a unique experiment ID with timestamp
+        """
+        timestamp = datetime.now().strftime("Y%m%d_%H%M%S")
+        return f"exp_{timestamp}"
+
+    def _init_wandb(self, project: str | None, config: dict[str, Any]) -> None:
+        """
+        Initialize Weights & Biases logging.
+
+        Args:
+            project: Name of the W&B project to log to. Defaults to "cs336-assignment1" if None
+            config: Optional dictionary of configuration parameters to log to W&B
+        """
+        try:
+            self.wandb_run = wandb.init(
+                project=project or "cs336-assignment1",
+                name=self.experiment_name,
+                id=self.experiment_id,
+                config=config or {},
+                resume="allow",
+            )
+        except Exception as e:
+            warnings.warn(f"Failed to initialize W&B: {e}")
+            self.use_wandb = False
+
+    def _save_metadata(self) -> None:
+        """Save experiment metadata."""
+        metadata_path = self.experiment_dir / "metadata.json"
+        with open(metadata_path, "w") as f:
+            json.dump(asdict(self.metadata), f, indent=2, default=str)
+
+    def update_config(self, **kwargs) -> None:
+        """Update experiment configuration."""
+        self.config.update(**kwargs)
+
+        if self.use_wandb and self.wandb_run:
+            self.wandb_run.config.update(kwargs)
+
+    def log_metric(self, name: str, value: float, step: int | None = None, epoch: int | None = None):
+        """
+        Log a metric value.
+
+        Args:
+            name: Metric name (e.g., 'train_loss', 'val_loss')
+            value: Metric value
+            step: Training step (uses internal counter if None)
+            epoch: Training epoch (optional)
+        """
+        if step is None:
+            step = self.current_step
+        else:
+            self.current_step = max(self.current_step, step)
+
+        wall_time = time.time() - self.start_wall_time
+
+        if name not in self.metrics:
+            self.metrics[name] = []
+
+        self.metrics[name].append(MetricPoint(step=step, wall_time=wall_time, value=value, epoch=epoch))
+
+        if self.use_wandb and self.wandb_run:
+            log_dict = {name: value}
+            if epoch is not None:
+                log_dict[epoch] = epoch
+            self.wandb_run.log(log_dict, step=step)
+
+        if step - self.last_save_step >= self.auto_save_interval:
+            self.save()
+            self.last_save_step = step
+
+    def log_metrics(self, metrics: dict[str, float], **kwargs) -> None:
+        """
+        Log multiple metrics at once.
+
+        Args:
+            metrics: Dictionary mapping metric names to values
+        """
+        for name, value in metrics.items():
+            self.log_metric(name, value, **kwargs)
+
+    def save(self) -> None:
+        """Save experiment data to disk."""
+        self._save_metadata()
+
+        config_path = self.experiment_dir / "config.json"
+        with open(config_path, "w") as f:
+            json.dump(asdict(self.config), f, indent=2, default=str)
+
+        metrics_path = self.experiment_dir / "metrics.json"
+        metrics_data = {}
+        for name, history in self.metrics.items():
+            metrics_data[name] = [asdict(point) for point in history]
+
+        with open(metrics_path, "w") as f:
+            json.dump(metrics_data, f, indent=2, default=str)
+
+        report_path = self.experiment_dir / "summary.txt"
+        with open(report_path, "w") as f:
+            f.write(self.generate_summary_report())
+
+    def generate_summary_report(self) -> str:
+        """
+        Generate a summary report of the experiment.
+
+        Returns:
+            A formatted string containing a summary report of the experiment, including
+            experiment metadata, configuration, metrics and notes.
+        """
+        report = f"""
+Experiment Summary Report
+=========================
+
+Experiment ID: {self.experiment_id}
+Name: {self.experiment_name}
+Description: {self.description}
+Status: {self.metadata.status}
+Start Time: {self.metadata.start_time.strftime("%Y-%m-%d %H:%M:%S")}
+"""
+
+        if self.metadata.end_time:
+            duration = self.metadata.end_time - self.metadata.start_time
+            report += f"End Time: {self.metadata.end_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            report += f"Duration: {duration}\n"
+
+        report += f"Tags: {', '.join(self.metadata.tags) if self.metadata.tags else 'None'}\n\n"
+
+        config_dict = asdict(self.config)
+        non_none_config = {k: v for k, v in config_dict.items() if v is not None and k != "custom"}
+        if non_none_config:
+            report += "Configuration:\n"
+            for key, value in non_none_config.items():
+                report += f"  {key}: {value}\n"
+
+        if self.config.custom:
+            report += "Custom Parameters:\n"
+            for key, value in self.config.custom.items():
+                report += f"  {key}: {value}\n"
+
+        if self.metrics:
+            report += "\nMetrics Summary:\n"
+            for metric_name, history in self.metrics.items():
+                if history:
+                    latest = history[-1]
+                    report += f"  {metric_name}: {latest.value:.6f} (step {latest.step})\n"
+
+        if self.metadata.notes.strip():
+            report += f"\nNotes:{self.metadata.notes}\n"
+
+        return report
