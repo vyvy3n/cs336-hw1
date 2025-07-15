@@ -183,12 +183,6 @@ class ExperimentLogger:
             warnings.warn(f"Failed to initialize W&B: {e}")
             self.use_wandb = False
 
-    def _save_metadata(self) -> None:
-        """Save experiment metadata."""
-        metadata_path = self.experiment_dir / "metadata.json"
-        with open(metadata_path, "w") as f:
-            json.dump(asdict(self.metadata), f, indent=2, default=str)
-
     def update_config(self, **kwargs) -> None:
         """Update experiment configuration."""
         self.config.update(**kwargs)
@@ -238,25 +232,137 @@ class ExperimentLogger:
         for name, value in metrics.items():
             self.log_metric(name, value, **kwargs)
 
-    def save(self) -> None:
-        """Save experiment data to disk."""
-        self._save_metadata()
+    def log_hyperparameters(self, **hyperparams) -> None:
+        """Log hyperparameters."""
+        self.update_config(**hyperparams)
 
-        config_path = self.experiment_dir / "config.json"
-        with open(config_path, "w") as f:
-            json.dump(asdict(self.config), f, indent=2, default=str)
+    def add_tag(self, tag: str) -> None:
+        """
+        Add a tag to the experiment.
 
-        metrics_path = self.experiment_dir / "metrics.json"
-        metrics_data = {}
-        for name, history in self.metrics.items():
-            metrics_data[name] = [asdict(point) for point in history]
+        Args:
+            tag: Tag string to add to experiment metadata
+        """
+        if tag not in self.metadata.tags:
+            self.metadata.tags.append(tag)
 
-        with open(metrics_path, "w") as f:
-            json.dump(metrics_data, f, indent=2, default=str)
+    def add_note(self, note: str) -> None:
+        """
+        Add a note to the experiment.
 
-        report_path = self.experiment_dir / "summary.txt"
-        with open(report_path, "w") as f:
-            f.write(self.generate_summary_report())
+        Args:
+            note: Text note to add to experiment metadata
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.metadata.notes += f"\n[{timestamp}] {note}"
+
+    def mark_completed(self) -> None:
+        """Mark experiment as completed."""
+        self.metadata.status = "completed"
+        self.metadata.end_time = datetime.now()
+        self.save()
+
+        if self.use_wandb and self.wandb_run:
+            self.wandb_run.finish()
+
+    def mark_failed(self, error_message: str = "") -> None:
+        """
+        Mark experiment as failed.
+
+        Args:
+            error_message: Optional error message to add to experiment notes
+        """
+        self.metadata.status = "failed"
+        self.metadata.end_time = datetime.now()
+        if error_message:
+            self.add_note(f"FAILED: {error_message}")
+        self.save()
+
+        if self.use_wandb and self.wandb_run:
+            self.wandb_run.finish(exit_code=1)
+
+    def get_metric_history(self, metric_name: str) -> list[MetricPoint]:
+        """
+        Get history of a specific metric.
+
+        Args:
+            metric_name: Name of the metric to retrieve history for
+
+        Returns:
+            List of MetricPoint objects containing the metric values and timestamps,
+            or empty list if metric is not found
+        """
+        return self.metrics.get(metric_name, [])
+
+    def get_latest_metric(self, metric_name: str) -> float | None:
+        """
+        Get the latest value of a metric.
+
+        Args:
+            metric_name: Name of the metric to retrieve the latest value for
+
+        Returns:
+            The value of the latest recorded metric point, or None if no value exist
+        """
+        history = self.get_latest_metric(metric_name)
+        return history[-1].value if history else None
+
+    def plot_metrics(
+        self,
+        metric_names: list[str],
+        x_axis: str = "step",
+        title: str | None = None,
+        save_path: str | Path | None = None,
+        figsize: tuple[int, int] = (12, 8),
+    ) -> plt.Figure:
+        """
+        Plot learning curves for specified metrics.
+
+        Args:
+            metric_names: Name of metric names to plot
+            x_axis: What to use for x-axis ("step" or "time")
+            title: Plot title
+            save_path: Path to save plot (optional)
+            figsize: Figure size
+
+        Returns:
+            Matplotlib figure object
+        """
+        mplstyle.use("seaborn-v0_8")
+        fig, ax = plt.subplots(figsize=figsize)
+
+        for metric_name in metric_names:
+            history = self.get_metric_history(metric_name)
+            if not history:
+                continue
+
+            if x_axis == "step":
+                x_data = [point.step for point in history]
+                x_label = "Training Step"
+            elif x_label == "time":
+                x_data = [point.wall_time for point in history]
+                x_label = "Wall Time (hours)"
+            else:
+                raise ValueError(f"Invalid x_axis: {x_axis}")
+
+            y_data = [point.value for point in history]
+            ax.plot(x_data, y_data, label=metric_name, linewidth=2)
+
+        ax.set_xlabel(x_label)
+        ax.set_ylabel("Value")
+        ax.set_title(title or f"Learning Curves - {self.experiment_name}")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
+        else:
+            plot_path = self.experiment_dir / f"learning_curves_{x_axis}.png"
+            fig.savefig(plot_path, dpi=300, bbox_inches="tight")
+
+        return fig
 
     def generate_summary_report(self) -> str:
         """
@@ -307,3 +413,29 @@ Start Time: {self.metadata.start_time.strftime("%Y-%m-%d %H:%M:%S")}
             report += f"\nNotes:{self.metadata.notes}\n"
 
         return report
+
+    def save(self) -> None:
+        """Save experiment data to disk."""
+        self._save_metadata()
+
+        config_path = self.experiment_dir / "config.json"
+        with open(config_path, "w") as f:
+            json.dump(asdict(self.config), f, indent=2, default=str)
+
+        metrics_path = self.experiment_dir / "metrics.json"
+        metrics_data = {}
+        for name, history in self.metrics.items():
+            metrics_data[name] = [asdict(point) for point in history]
+
+        with open(metrics_path, "w") as f:
+            json.dump(metrics_data, f, indent=2, default=str)
+
+        report_path = self.experiment_dir / "summary.txt"
+        with open(report_path, "w") as f:
+            f.write(self.generate_summary_report())
+
+    def _save_metadata(self) -> None:
+        """Save experiment metadata."""
+        metadata_path = self.experiment_dir / "metadata.json"
+        with open(metadata_path, "w") as f:
+            json.dump(asdict(self.metadata), f, indent=2, default=str)
