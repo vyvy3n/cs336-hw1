@@ -12,6 +12,8 @@ from bpe.regex_tokenizer import RegexTokenizer
 from bpe.pre_tokenizer import run_pre_tokenization
 from bpe.tokenizer import Tokenizer
 from modules.linear import Linear
+from modules.embedding import Embedding
+
 
 
 def run_linear(
@@ -56,8 +58,9 @@ def run_embedding(
     Returns:
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
-
-    raise NotImplementedError
+    embedding = Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+    embedding.load_state_dict({"weight": weights})
+    return embedding.forward(token_ids=token_ids)
 
 
 def run_swiglu(

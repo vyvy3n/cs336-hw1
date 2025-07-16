@@ -2,6 +2,8 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 from einops import einsum
+from torch.nn import functional as F, init
+import math
 
 
 class Linear(nn.Module):
@@ -29,16 +31,27 @@ class Linear(nn.Module):
         super().__init__()
         # Your implementation for initializing the weight parameter (self.W) goes here,
         # [cite_start]making sure to use nn.Parameter and the specified initialization scheme[cite: 515, 541, 543].
-        self.weight = torch.nn.parameter.Parameter(
-            torch.Tensor(out_features, in_features)
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        self.weight = nn.parameter.Parameter(
+            torch.empty((out_features, in_features), **factory_kwargs)
         )
-        torch.nn.init.trunc_normal_(
-            self.weight, mean=0, std=(2 / (in_features + out_features)) ** 0.5
+        self.in_features = in_features
+        self.out_features = out_features
+        self._reset_parameters()
+        
+    def _reset_parameters(self) -> None:
+        # Initialize the weight parameter using the Kaiming uniform distribution
+        # init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        # In ASI, we use truncated normal distribution
+        trunc_normal_std = math.sqrt(2 / (self.in_features + self.out_features))
+        
+        init.trunc_normal_(
+            self.weight, 
+            mean = 0, 
+            std = trunc_normal_std,
+            a = -3 * trunc_normal_std,
+            b = 3 * trunc_normal_std
         )
-        if device:
-            self.weight.to(device=device)
-        if dtype:
-            self.weight.to(dtype=dtype)
 
     def forward(self, x: Tensor) -> Tensor:
         """
