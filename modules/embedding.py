@@ -55,10 +55,5 @@ class Embedding(nn.Module):
         Returns:
             A tensor of the corresponding embedding vectors, of shape (..., embedding_dim).
         """
-        # Your implementation for the embedding lookup goes here.
-        # [cite_start]Do not use nn.Embedding or nn.functional.embedding[cite: 569].
-        # flat_token_ids = rearrange(token_ids, "... -> (...)")
-        # flat_embedded = torch.index_select(self.weight, 0, flat_token_ids)
-        # return rearrange(flat_embedded, '(...) d -> ... d', **{'...': token_ids.shape})
         return self.weight[token_ids]
         

@@ -13,6 +13,7 @@ from bpe.pre_tokenizer import run_pre_tokenization
 from bpe.tokenizer import Tokenizer
 from modules.linear import Linear
 from modules.embedding import Embedding
+from modules.rms_norm import RMSNorm
 
 
 
@@ -387,7 +388,9 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
-    raise NotImplementedError
+    rmsNorm = RMSNorm(d_model=d_model, eps=eps)
+    rmsNorm.load_state_dict({"gain": weights})
+    return rmsNorm.forward(in_features)
 
 
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
