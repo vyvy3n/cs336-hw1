@@ -14,7 +14,8 @@ from bpe.tokenizer import Tokenizer
 from modules.linear import Linear
 from modules.embedding import Embedding
 from modules.rms_norm import RMSNorm
-
+from modules.silu import silu
+from modules.swiglu import SwiGLU
 
 
 def run_linear(
@@ -36,9 +37,9 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
 
-    linear =  Linear(in_features=d_in, out_features=d_out)
+    linear = Linear(in_features=d_in, out_features=d_out)
     linear.load_state_dict({"weight": weights})
-    return linear.forward(x = in_features)
+    return linear.forward(x=in_features)
 
 
 def run_embedding(
@@ -93,7 +94,11 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    raise NotImplementedError
+    swiglu = SwiGLU(d_model=d_model, d_ff=d_ff)
+    swiglu.load_state_dict(
+        {"w1.weight": w1_weight, "w2.weight": w2_weight, "w3.weight": w3_weight}
+    )
+    return swiglu(in_features)
 
 
 def run_scaled_dot_product_attention(
@@ -404,7 +409,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    return silu(in_features)
 
 
 def run_get_batch(
@@ -609,7 +614,9 @@ def run_train_bpe(
     ids_to_count = run_pre_tokenization(
         input_path=input_path, tokenizer=tokenizer, special_tokens=special_tokens
     )
-    tokenizer.train(vocab_size=vocab_size, global_subword_count=ids_to_count, verbose=False)
+    tokenizer.train(
+        vocab_size=vocab_size, global_subword_count=ids_to_count, verbose=False
+    )
     return tokenizer.vocab, [
         (tokenizer.vocab[merge[0]], tokenizer.vocab[merge[1]])
         for merge in tokenizer.merges
