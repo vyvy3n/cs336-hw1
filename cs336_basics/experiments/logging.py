@@ -10,6 +10,8 @@ This module provides comprehensive experiment tracking capabilities including:
 - Experiment persistence and loading
 """
 
+from __future__ import annotations
+
 import json
 import time
 import warnings
@@ -327,6 +329,9 @@ class ExperimentLogger:
 
         Returns:
             Matplotlib figure object
+
+        Raises:
+            ValueError: x_axis not defined as "step" or "time"
         """
         mplstyle.use("seaborn-v0_8")
         fig, ax = plt.subplots(figsize=figsize)
@@ -439,3 +444,85 @@ Start Time: {self.metadata.start_time.strftime("%Y-%m-%d %H:%M:%S")}
         metadata_path = self.experiment_dir / "metadata.json"
         with open(metadata_path, "w") as f:
             json.dump(asdict(self.metadata), f, indent=2, default=str)
+
+    @classmethod
+    def load(cls, experiment_id: str, log_dir: str | Path = "experiments") -> ExperimentLogger:
+        """
+        Load an existing experiment.
+
+        Args:
+            experiment_id: ID of experiment to load
+            log_dir: Directory containing experiments to log
+
+        Returns:
+            Loaded ExperimentLogger instance
+
+        Raises:
+            FileNotFoundError: No experiment directory for given experiment id
+        """
+        log_dir = Path(log_dir)
+        experiment_dir = log_dir / experiment_id
+
+        if not experiment_dir.exists():
+            raise FileNotFoundError(f"Experiment {experiment_id} not found in {log_dir}")
+
+        metadata_path = experiment_dir / "metadata.json"
+        with open(metadata_path, "r") as f:
+            metadata_dict = json.load(f)
+
+        logger = cls(
+            experiment_name=metadata_dict["name"],
+            experiment_id=experiment_id,
+            description=metadata_dict["description"],
+            log_dir=log_dir,
+            use_wandb=False,
+        )
+
+        logger.metadata = ExperimentMetadata(**metadata_dict)
+        if isinstance(logger.metadata.start_time, str):
+            logger.metadata.start_time = datetime.fromisoformat(logger.metadata.start_time)
+        if logger.metadata.end_time and isinstance(logger.metadata.end_time, str):
+            logger.metadata.end_time = datetime.fromisoformat(logger.metadata.end_time)
+
+        config_path = experiment_dir / "config.json"
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                config_dict = json.load(f)
+            logger.config = ExperimentConfig(**config_dict)
+
+        metrics_path = experiment_dir / "metrics.json"
+        if metrics_path.exists():
+            with open(metrics_path, "r") as f:
+                metrics_data = json.load(f)
+
+            for name, history_data in metrics_data.items():
+                logger.metrics[name] = [MetricPoint(**point_data) for point_data in history_data]
+
+
+class TrainingIntegrator:
+    """Helper class for easy integration with training loops."""
+
+    def __init__(self, logger: ExperimentLogger) -> None:
+        """
+        Initialize training integrator.
+
+        Args:
+            logger: ExperimentLogger instance
+        """
+        self.logger = logger
+        self.step_start_time = time.time()
+
+    def log_training_step(self, step: int, train_loss: float, learning_rate: float, **additional_metrics) -> None:
+        """
+        Log metrics for a training step.
+
+        Args:
+            step: Training step number
+            train_loss: Training loss value
+            learning_rate: Current learning rate
+            **additional_metrics: Any additional metrics to log
+        """
+        metrics = {"train_loss": train_loss, "learning_rate": learning_rate, **additional_metrics}
+
+        for name, value in metrics.items():
+            self.logger.log_metric(name, value, step=step)
