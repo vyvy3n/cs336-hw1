@@ -2,15 +2,13 @@
 Experiment logging infrastructure.
 
 This module provides comprehensive experiment tracking capabilities including:
-- Experiment tracking and hyperparameter logging
+- Experiment metadata and hyperparameter logging
 - Metrics tracking with timestamps and step numbers
 - Learning curve visualization
 - Integration with training loops
 - Optional Weights & Biases integration
 - Experiment persistence and loading
 """
-
-from __future__ import annotations
 
 import json
 import time
@@ -88,7 +86,6 @@ class ExperimentMetadata:
     notes: str = ""
 
 
-@dataclass
 class ExperimentLogger:
     """
     Comprehensive experiment logger for tracking ML experiments.
@@ -96,9 +93,10 @@ class ExperimentLogger:
     Features:
     - Track metrics over training steps and wall time
     - Log hyperparameters and experiment metadata
-    - Generate learning vurve visualizations
-    - Save/load experiemt logs
-    - Optional Weights & Biases integration.
+    - Generate learning curve visualizations
+    - Save/load experiment logs
+    - Optional Weights & Biases integration
+    - Easy integration with training loops
     """
 
     def __init__(
@@ -131,7 +129,7 @@ class ExperimentLogger:
         self.start_time = datetime.now()
 
         self.log_dir = Path(log_dir)
-        self.experiment_dir = self.log_dir / experiment_id
+        self.experiment_dir = self.log_dir / self.experiment_id
         self.experiment_dir.mkdir(parents=True, exist_ok=True)
 
         self.metadata = ExperimentMetadata(
@@ -156,18 +154,16 @@ class ExperimentLogger:
         self._save_metadata()
 
     def _generate_experiment_id(self) -> str:
-        """
-        Generate a unique experiment ID.
+        """Generate a unique experiment ID.
 
         Returns:
             A string containing a unique experiment ID with timestamp
         """
-        timestamp = datetime.now().strftime("Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"exp_{timestamp}"
 
-    def _init_wandb(self, project: str | None, config: dict[str, Any]) -> None:
-        """
-        Initialize Weights & Biases logging.
+    def _init_wandb(self, project: str | None, config: dict[str, Any] | None) -> None:
+        """Initialize Weights & Biases logging.
 
         Args:
             project: Name of the W&B project to log to. Defaults to "cs336-assignment1" if None
@@ -192,7 +188,7 @@ class ExperimentLogger:
         if self.use_wandb and self.wandb_run:
             self.wandb_run.config.update(kwargs)
 
-    def log_metric(self, name: str, value: float, step: int | None = None, epoch: int | None = None):
+    def log_metric(self, name: str, value: float, step: int | None = None, epoch: int | None = None) -> None:
         """
         Log a metric value.
 
@@ -217,7 +213,7 @@ class ExperimentLogger:
         if self.use_wandb and self.wandb_run:
             log_dict = {name: value}
             if epoch is not None:
-                log_dict[epoch] = epoch
+                log_dict["epoch"] = epoch
             self.wandb_run.log(log_dict, step=step)
 
         if step - self.last_save_step >= self.auto_save_interval:
@@ -225,11 +221,11 @@ class ExperimentLogger:
             self.last_save_step = step
 
     def log_metrics(self, metrics: dict[str, float], **kwargs) -> None:
-        """
-        Log multiple metrics at once.
+        """Log multiple metrics at once.
 
         Args:
             metrics: Dictionary mapping metric names to values
+            **kwargs: Additional arguments passed to log_metric()
         """
         for name, value in metrics.items():
             self.log_metric(name, value, **kwargs)
@@ -239,8 +235,7 @@ class ExperimentLogger:
         self.update_config(**hyperparams)
 
     def add_tag(self, tag: str) -> None:
-        """
-        Add a tag to the experiment.
+        """Add a tag to the experiment.
 
         Args:
             tag: Tag string to add to experiment metadata
@@ -249,8 +244,7 @@ class ExperimentLogger:
             self.metadata.tags.append(tag)
 
     def add_note(self, note: str) -> None:
-        """
-        Add a note to the experiment.
+        """Add a note to the experiment.
 
         Args:
             note: Text note to add to experiment metadata
@@ -268,8 +262,7 @@ class ExperimentLogger:
             self.wandb_run.finish()
 
     def mark_failed(self, error_message: str = "") -> None:
-        """
-        Mark experiment as failed.
+        """Mark experiment as failed.
 
         Args:
             error_message: Optional error message to add to experiment notes
@@ -284,29 +277,27 @@ class ExperimentLogger:
             self.wandb_run.finish(exit_code=1)
 
     def get_metric_history(self, metric_name: str) -> list[MetricPoint]:
-        """
-        Get history of a specific metric.
+        """Get history of a specific metric.
 
         Args:
             metric_name: Name of the metric to retrieve history for
 
         Returns:
-            List of MetricPoint objects containing the metric values and timestamps,
-            or empty list if metric is not found
+            list of MetricPoint objects containing the metric values and timestamps,
+            or empty list if metric not found
         """
         return self.metrics.get(metric_name, [])
 
     def get_latest_metric(self, metric_name: str) -> float | None:
-        """
-        Get the latest value of a metric.
+        """Get the latest value of a metric.
 
         Args:
             metric_name: Name of the metric to retrieve the latest value for
 
         Returns:
-            The value of the latest recorded metric point, or None if no value exist
+            The value of the latest recorded metric point, or None if no values exist
         """
-        history = self.get_latest_metric(metric_name)
+        history = self.get_metric_history(metric_name)
         return history[-1].value if history else None
 
     def plot_metrics(
@@ -315,24 +306,31 @@ class ExperimentLogger:
         x_axis: str = "step",
         title: str | None = None,
         save_path: str | Path | None = None,
-        figsize: tuple[int, int] = (12, 8),
-    ) -> plt.Figure:
+        figsize: tuple = (12, 8),
+    ):
         """
         Plot learning curves for specified metrics.
 
         Args:
-            metric_names: Name of metric names to plot
+            metric_names: list of metric names to plot
             x_axis: What to use for x-axis ("step" or "time")
             title: Plot title
             save_path: Path to save plot (optional)
             figsize: Figure size
 
         Returns:
-            Matplotlib figure object
-
-        Raises:
-            ValueError: x_axis not defined as "step" or "time"
+            Matplotlib figure object if matplotlib is available, None otherwise
         """
+        assert mplstyle is not None
+        assert plt is not None
+
+        if x_axis == "step":
+            x_label = "Training Step"
+        elif x_axis == "time":
+            x_label = "Wall Time (hours)"
+        else:
+            raise ValueError(f"Invalid x_axis: {x_axis}")
+
         mplstyle.use("seaborn-v0_8")
         fig, ax = plt.subplots(figsize=figsize)
 
@@ -343,12 +341,8 @@ class ExperimentLogger:
 
             if x_axis == "step":
                 x_data = [point.step for point in history]
-                x_label = "Training Step"
-            elif x_label == "time":
-                x_data = [point.wall_time for point in history]
-                x_label = "Wall Time (hours)"
             else:
-                raise ValueError(f"Invalid x_axis: {x_axis}")
+                x_data = [point.wall_time / 3600 for point in history]
 
             y_data = [point.value for point in history]
             ax.plot(x_data, y_data, label=metric_name, linewidth=2)
@@ -370,16 +364,15 @@ class ExperimentLogger:
         return fig
 
     def generate_summary_report(self) -> str:
-        """
-        Generate a summary report of the experiment.
+        """Generate a summary report of the experiment.
 
         Returns:
             A formatted string containing a summary report of the experiment, including
-            experiment metadata, configuration, metrics and notes.
+            experiment metadata, configuration, metrics, and notes.
         """
         report = f"""
 Experiment Summary Report
-=========================
+========================
 
 Experiment ID: {self.experiment_id}
 Name: {self.experiment_name}
@@ -446,19 +439,16 @@ Start Time: {self.metadata.start_time.strftime("%Y-%m-%d %H:%M:%S")}
             json.dump(asdict(self.metadata), f, indent=2, default=str)
 
     @classmethod
-    def load(cls, experiment_id: str, log_dir: str | Path = "experiments") -> ExperimentLogger:
+    def load(cls, experiment_id: str, log_dir: str | Path = "experiments") -> "ExperimentLogger":
         """
         Load an existing experiment.
 
         Args:
             experiment_id: ID of experiment to load
-            log_dir: Directory containing experiments to log
+            log_dir: Directory containing experiment logs
 
         Returns:
             Loaded ExperimentLogger instance
-
-        Raises:
-            FileNotFoundError: No experiment directory for given experiment id
         """
         log_dir = Path(log_dir)
         experiment_dir = log_dir / experiment_id
@@ -498,11 +488,13 @@ Start Time: {self.metadata.start_time.strftime("%Y-%m-%d %H:%M:%S")}
             for name, history_data in metrics_data.items():
                 logger.metrics[name] = [MetricPoint(**point_data) for point_data in history_data]
 
+        return logger
+
 
 class TrainingIntegrator:
     """Helper class for easy integration with training loops."""
 
-    def __init__(self, logger: ExperimentLogger) -> None:
+    def __init__(self, logger: ExperimentLogger):
         """
         Initialize training integrator.
 
@@ -548,17 +540,15 @@ class TrainingIntegrator:
             self.logger.log_metric(name, value, step=step)
 
     def start_epoch(self, epoch: int) -> None:
-        """
-        Signal start of a new epoch.
+        """Signal start of a new epoch.
 
         Args:
-            epoch: The epoch number to log.
+            epoch: The epoch number to log
         """
         self.logger.log_metric("epoch", epoch, step=self.logger.current_step)
 
     def log_step_time(self, step: int) -> None:
-        """
-        Log the time taken for the current step.
+        """Log the time taken for the current step.
 
         Args:
             step: Training step number to log the time for
@@ -591,19 +581,29 @@ def create_experiment_logger(name: str, description: str = "", **config_kwargs) 
 
 def compare_experiments(
     experiment_ids: list[str], metric_name: str, log_dir: str | Path = "experiments", x_axis: str = "step"
-) -> plt.Figure:
+):
     """
     Compare multiple experiments by plotting a specific metric.
 
     Args:
-        experiment_ids: List of experiment IDs to compare
+        experiment_ids: list of experiment IDs to compare
         metric_name: Name of metric to compare
         log_dir: Directory containing experiment logs
         x_axis: What to use for x-axis ("step" or "time")
 
     Returns:
-        Matplotlib figure with comparison plot
+        Matplotlib figure with comparison plot if matplotlib is available, None otherwise
     """
+    assert mplstyle is not None
+    assert plt is not None
+
+    if x_axis == "step":
+        x_label = "Training Step"
+    elif x_axis == "time":
+        x_label = "Wall Time (hours)"
+    else:
+        raise ValueError(f"Invalid x_axis: {x_axis}")
+
     mplstyle.use("seaborn-v0_8")
     fig, ax = plt.subplots(figsize=(12, 8))
 
@@ -617,12 +617,8 @@ def compare_experiments(
 
             if x_axis == "step":
                 x_data = [point.step for point in history]
-                x_label = "Training Step"
-            elif x_axis == "time":
-                x_data = [point.wall_time / 3600 for point in history]
-                x_label = "Wall Time (hours)"
             else:
-                raise ValueError(f"Invalid x_axis: {x_axis}")
+                x_data = [point.wall_time / 3600 for point in history]
 
             y_data = [point.value for point in history]
             ax.plot(x_data, y_data, label=f"{logger.experiment_name} ({exp_id})", linewidth=2)
