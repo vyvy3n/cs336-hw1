@@ -526,8 +526,10 @@ class TrainingIntegrator:
 
         for name, value in metrics.items():
             self.logger.log_metric(name, value, step=step)
-    
-    def log_validation_step(self, step: int, val_loss: float, perplexity: float | None = None, **additional_metrics) -> None:
+
+    def log_validation_step(
+        self, step: int, val_loss: float, perplexity: float | None = None, **additional_metrics
+    ) -> None:
         """
         Log validation metrics.
 
@@ -538,13 +540,13 @@ class TrainingIntegrator:
             **additional_metrics: Any additional metrics to log
         """
         metrics = {"val_loss": val_loss, **additional_metrics}
-        
+
         if perplexity is not None:
             metrics["val_perplexity"] = perplexity
-        
+
         for name, value in metrics.items():
             self.logger.log_metric(name, value, step=step)
-    
+
     def start_epoch(self, epoch: int) -> None:
         """
         Signal start of a new epoch.
@@ -553,7 +555,7 @@ class TrainingIntegrator:
             epoch: The epoch number to log.
         """
         self.logger.log_metric("epoch", epoch, step=self.logger.current_step)
-    
+
     def log_step_time(self, step: int) -> None:
         """
         Log the time taken for the current step.
@@ -575,19 +577,15 @@ def create_experiment_logger(name: str, description: str = "", **config_kwargs) 
         name: Experiment name
         description: Experiment description
         **config_kwargs: Configuration parameters to log
-    
+
     Returns:
         Configured ExperimentLogger instance
     """
-    logger = ExperimentLogger(
-        experiment_name=name,
-        description=description,
-        use_wandb=True
-    )
+    logger = ExperimentLogger(experiment_name=name, description=description, use_wandb=True)
 
     if config_kwargs:
         logger.update_config(**config_kwargs)
-    
+
     return logger
 
 
@@ -602,9 +600,41 @@ def compare_experiments(
         metric_name: Name of metric to compare
         log_dir: Directory containing experiment logs
         x_axis: What to use for x-axis ("step" or "time")
-    
+
     Returns:
         Matplotlib figure with comparison plot
     """
-    # mplstyle.use("seaborn-v0_8")
-    pass
+    mplstyle.use("seaborn-v0_8")
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    for exp_id in experiment_ids:
+        try:
+            logger = ExperimentLogger.load(exp_id, log_dir)
+            history = logger.get_metric_history(metric_name)
+
+            if not history:
+                continue
+
+            if x_axis == "step":
+                x_data = [point.step for point in history]
+                x_label = "Training Step"
+            elif x_axis == "time":
+                x_data = [point.wall_time / 3600 for point in history]
+                x_label = "Wall Time (hours)"
+            else:
+                raise ValueError(f"Invalid x_axis: {x_axis}")
+
+            y_data = [point.value for point in history]
+            ax.plot(x_data, y_data, label=f"{logger.experiment_name} ({exp_id})", linewidth=2)
+
+        except Exception as e:
+            warnings.warn(f"Failed to load experiment {exp_id}: {e}")
+
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(metric_name)
+    ax.set_title(f"Experiment Comparison - {metric_name}")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    return fig
