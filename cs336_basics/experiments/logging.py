@@ -526,3 +526,85 @@ class TrainingIntegrator:
 
         for name, value in metrics.items():
             self.logger.log_metric(name, value, step=step)
+    
+    def log_validation_step(self, step: int, val_loss: float, perplexity: float | None = None, **additional_metrics) -> None:
+        """
+        Log validation metrics.
+
+        Args:
+            step: Training step number
+            val_loss: Validation loss
+            perplexity: Perplexity score (optional)
+            **additional_metrics: Any additional metrics to log
+        """
+        metrics = {"val_loss": val_loss, **additional_metrics}
+        
+        if perplexity is not None:
+            metrics["val_perplexity"] = perplexity
+        
+        for name, value in metrics.items():
+            self.logger.log_metric(name, value, step=step)
+    
+    def start_epoch(self, epoch: int) -> None:
+        """
+        Signal start of a new epoch.
+
+        Args:
+            epoch: The epoch number to log.
+        """
+        self.logger.log_metric("epoch", epoch, step=self.logger.current_step)
+    
+    def log_step_time(self, step: int) -> None:
+        """
+        Log the time taken for the current step.
+
+        Args:
+            step: Training step number to log the time for
+        """
+        current_time = time.time()
+        step_time = current_time - self.step_start_time
+        self.logger.log_metric("step_time", step_time, step=step)
+        self.step_start_time = current_time
+
+
+def create_experiment_logger(name: str, description: str = "", **config_kwargs) -> ExperimentLogger:
+    """
+    Convenience function to create and configure an experiment logger.
+
+    Args:
+        name: Experiment name
+        description: Experiment description
+        **config_kwargs: Configuration parameters to log
+    
+    Returns:
+        Configured ExperimentLogger instance
+    """
+    logger = ExperimentLogger(
+        experiment_name=name,
+        description=description,
+        use_wandb=True
+    )
+
+    if config_kwargs:
+        logger.update_config(**config_kwargs)
+    
+    return logger
+
+
+def compare_experiments(
+    experiment_ids: list[str], metric_name: str, log_dir: str | Path = "experiments", x_axis: str = "step"
+) -> plt.Figure:
+    """
+    Compare multiple experiments by plotting a specific metric.
+
+    Args:
+        experiment_ids: List of experiment IDs to compare
+        metric_name: Name of metric to compare
+        log_dir: Directory containing experiment logs
+        x_axis: What to use for x-axis ("step" or "time")
+    
+    Returns:
+        Matplotlib figure with comparison plot
+    """
+    # mplstyle.use("seaborn-v0_8")
+    pass
