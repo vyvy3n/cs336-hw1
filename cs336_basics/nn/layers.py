@@ -136,11 +136,11 @@ class RMSNorm(nn.Module):
 
     Paper: "Root Mean Square Layer Normalization" (Zhang and Sennrich, 2019)
     Formula: RMSNorm(x) = (x / RMS(x)) * weight
-    where RMS(x) = sqrt(mena(x^2) + eps)
+    where RMS(x) = sqrt(mean(x^2) + eps)
     """
 
     def __init__(
-        self, d_model: int, eps: float = 1e-5, device: torch.device | None = None, dtype: torch.device | None = None
+        self, d_model: int, eps: float = 1e-5, device: torch.device | None = None, dtype: torch.dtype | None = None
     ) -> None:
         """
         Initialize the RMSNorm layer.
