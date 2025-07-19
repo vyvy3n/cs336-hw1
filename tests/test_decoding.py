@@ -2,7 +2,7 @@
 Tests for text generation and decoding functionality.
 
 This module tests the decoding strategies and text generation functions
-implemented in cs336_basics.experiments.decoding.
+implemented in cs336_basics.generation.decoding.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from cs336_basics.experiments.decoding import (
+from cs336_basics.generation.decoding import (
     GreedyDecoding,
     MultinomialDecoding,
     TopPDecoding,
