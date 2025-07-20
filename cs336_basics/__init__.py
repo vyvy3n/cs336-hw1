@@ -15,7 +15,7 @@ __version__ = "1.0.0"
 from cs336_basics.data import get_batch
 
 # Experiment tracking
-from cs336_basics.experiments.logging import ExperimentLogger, TrainingIntegrator
+from cs336_basics.experiments.exp_logging import ExperimentLogger, TrainingIntegrator
 
 # Text generation
 from cs336_basics.generation.decoding import (

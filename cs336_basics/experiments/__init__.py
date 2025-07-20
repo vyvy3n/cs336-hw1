@@ -1,6 +1,6 @@
 """Experiment tracking and logging infrastructure."""
 
-from cs336_basics.experiments.logging import (
+from cs336_basics.experiments.exp_logging import (
     ExperimentConfig,
     ExperimentLogger,
     ExperimentMetadata,

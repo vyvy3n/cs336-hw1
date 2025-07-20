@@ -46,7 +46,7 @@ import numpy as np
 import torch
 
 from cs336_basics.data import get_batch
-from cs336_basics.experiments.logging import ExperimentLogger, TrainingIntegrator
+from cs336_basics.experiments.exp_logging import ExperimentLogger, TrainingIntegrator
 from cs336_basics.loss.cross_entropy import cross_entropy
 from cs336_basics.nn.models import TransformerLM
 from cs336_basics.training.checkpoint import load_checkpoint, save_checkpoint

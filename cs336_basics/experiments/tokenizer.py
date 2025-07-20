@@ -319,4 +319,11 @@ def run_experiments() -> None:
 
 
 if __name__ == "__main__":
-    run_experiments()
+    ts_tokenizer = Tokenizer.from_files(
+        vocab_filepath="../output/tinystories_vocab.json",
+        merges_filepath="../output/tinystories_merges.pkl",
+        special_tokens=["<|endoftext|>"],
+    )
+    encode_dataset_to_numpy(
+        ts_tokenizer, "../data/TinyStoriesV2-GPT4-train.txt", "../data/encoded/tinystories_train_tokens"
+    )

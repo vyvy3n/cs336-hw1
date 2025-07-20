@@ -22,7 +22,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from cs336_basics.experiments.logging import (
+from cs336_basics.experiments.exp_logging import (
     ExperimentConfig,
     ExperimentLogger,
     ExperimentMetadata,
@@ -697,7 +697,7 @@ class TestUtilityFunctions:
     def test_create_experiment_logger(self) -> None:
         """Test convenience function for creating experiment logger."""
         with tempfile.TemporaryDirectory() as tmp_dir:
-            with patch("cs336_basics.experiments.logging.ExperimentLogger") as mock_logger_cls:
+            with patch("cs336_basics.experiments.exp_logging.ExperimentLogger") as mock_logger_cls:
                 mock_logger = MagicMock()
                 mock_logger_cls.return_value = mock_logger
 
