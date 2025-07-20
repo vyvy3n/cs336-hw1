@@ -173,7 +173,8 @@ class DataLoader:
         self.device = device
         self.pin_memory = pin_memory
 
-        if not os.path.exists(data_path):
+        data_path_obj = Path(data_path)
+        if not data_path_obj.exists():
             raise FileNotFoundError(f"Data file not found: {data_path}")
 
         self.data = np.memmap(data_path, dtype=np.uint16, mode="r")
@@ -337,7 +338,7 @@ class Trainer:
         )
 
         self.val_loader = None
-        if self.config.val_data_path and os.path.exists(self.config.val_data_path):
+        if self.config.val_data_path and Path(self.config.val_data_path).exists():
             self.val_loader = DataLoader(
                 data_path=self.config.val_data_path,
                 batch_size=self.config.batch_size,
@@ -350,14 +351,14 @@ class Trainer:
         """Try to resume from checkpoint."""
         checkpoint_path = None
 
-        if self.config.resume_from and os.path.exists(self.config.resume_from):
+        if self.config.resume_from and Path(self.config.resume_from).exists():
             checkpoint_path = self.config.resume_from
         elif self.config.auto_resume:
             checkpoint_dir = Path(self.config.checkpoint_dir)
             if checkpoint_dir.exists():
                 checkpoints = list(checkpoint_dir.glob("checkpoint_step_*.pt"))
                 if checkpoints:
-                    checkpoint_path = str(max(checkpoints, key=os.path.getmtime))
+                    checkpoint_path = str(max(checkpoints, key=lambda p: p.stat().st_mtime))
 
         if checkpoint_path:
             try:
@@ -518,8 +519,8 @@ class Trainer:
                     )
 
             if self.step % self.config.save_interval == 0 and self.step > 0:
-                checkpoint_path = os.path.join(self.config.checkpoint_dir, f"checkpoint_step_{self.step}.pt")
-                self.save_checkpoint(checkpoint_path)
+                checkpoint_path = Path(self.config.checkpoint_dir) / f"checkpoint_step_{self.step}.pt"
+                self.save_checkpoint(str(checkpoint_path))
 
             self.step += 1
 
@@ -531,8 +532,8 @@ class Trainer:
                 perplexity=final_eval["perplexity"],
             )
 
-        final_checkpoint = os.path.join(self.config.checkpoint_dir, "checkpoint_final.pt")
-        self.save_checkpoint(final_checkpoint)
+        final_checkpoint = Path(self.config.checkpoint_dir) / "checkpoint_final.pt"
+        self.save_checkpoint(str(final_checkpoint))
 
         total_time = time.time() - self.start_time
         self.experiment_logger.add_note(f"Training completed in {total_time / 60:.1f} minutes")
@@ -589,13 +590,19 @@ def create_optimized_configs() -> None:
         experiment_description="OpenWebText training optimized for H100 30-40min runtime",
     )
 
-    os.makedirs("cs336_basics/scripts/configs", exist_ok=True)
-    save_config(tinystories_config, "cs336_basics/scripts/configs/tinystories_h100.json")
-    save_config(owt_config, "cs336_basics/scripts/configs/openwebtext_h100.json")
+    project_root = Path.cwd()
+    configs_dir = project_root / "cs336_basics" / "scripts" / "configs"
+    configs_dir.mkdir(parents=True, exist_ok=True)
+
+    tinystories_config_path = configs_dir / "tinystories_h100.json"
+    owt_config_path = configs_dir / "openwebtext_h100.json"
+
+    save_config(tinystories_config, str(tinystories_config_path))
+    save_config(owt_config, str(owt_config_path))
 
     print("Created optimized configuration files:")
-    print("- cs336_basics/scripts/configs/tinystories_h100.json")
-    print("- cs336_basics/scripts/configs/openwebtext_h100.json")
+    print(f"- {tinystories_config_path}")
+    print(f"- {owt_config_path}")
 
 
 def main() -> None:
@@ -675,8 +682,8 @@ def main() -> None:
     if args.no_wandb:
         config.use_wandb = False
 
-    config_save_path = os.path.join(config.checkpoint_dir, "config.json")
-    save_config(config, config_save_path)
+    config_save_path = Path(config.checkpoint_dir) / "config.json"
+    save_config(config, str(config_save_path))
 
     trainer = Trainer(config)
     trainer.train()

@@ -22,7 +22,9 @@ def train_bpe_on_openwebtext() -> dict[str, Any]:
     Returns:
         Dictionary containing training results and statistics
     """
-    input_path = "data/owt_train.txt"
+    # Use pathlib.Path relative to current working directory (project root)
+    project_root = Path.cwd()
+    input_path = project_root / "data" / "owt_train.txt"
     vocab_size = 32_000
     special_tokens = ["<|endoftext|>"]
 
@@ -32,17 +34,17 @@ def train_bpe_on_openwebtext() -> dict[str, Any]:
     print(f"Special tokens: {special_tokens}")
     print()
 
-    if not Path(input_path).exists():
+    if not input_path.exists():
         raise FileNotFoundError(f"OpenWebText dataset not found at {input_path}. Please run the download script first.")
 
-    file_size_gb = Path(input_path).stat().st_size / (1024**3)
+    file_size_gb = input_path.stat().st_size / (1024**3)
     print(f"File size: {file_size_gb:.2f} GB")
 
     tracemalloc.start()
     start_time = time.time()
 
     print("Starting BPE training...")
-    vocab, merges = train_bpe(input_path=input_path, vocab_size=vocab_size, special_tokens=special_tokens)
+    vocab, merges = train_bpe(input_path=str(input_path), vocab_size=vocab_size, special_tokens=special_tokens)
 
     end_time = time.time()
     _, peak = tracemalloc.get_traced_memory()
@@ -56,7 +58,7 @@ def train_bpe_on_openwebtext() -> dict[str, Any]:
     longest_token = max(vocab.values(), key=len)
     longest_token_length = len(longest_token)
 
-    output_dir = Path("output")
+    output_dir = project_root / "output"
     output_dir.mkdir(exist_ok=True)
 
     vocab_path = output_dir / "openwebtext_vocab.json"
@@ -111,10 +113,12 @@ def compare_with_tinystories() -> None:
     print("COMPARISON WITH TINYSTORIES TOKENIZER")
     print("=" * 60)
 
-    ts_vocab_path = Path("output/tinystories_vocab.json")
-    ts_merges_path = Path("output/tinystories_merges.pkl")
-    owt_vocab_path = Path("output/openwebtext_vocab.json")
-    owt_merges_path = Path("output/openwebtext_merges.pkl")
+    project_root = Path.cwd()
+    output_dir = project_root / "output"
+    ts_vocab_path = output_dir / "tinystories_vocab.json"
+    ts_merges_path = output_dir / "tinystories_merges.pkl"
+    owt_vocab_path = output_dir / "openwebtext_vocab.json"
+    owt_merges_path = output_dir / "openwebtext_merges.pkl"
 
     if not (ts_vocab_path.exists() and ts_merges_path.exists()):
         print("TinyStories tokenizer not found. Please train it first using train_bpe_tinystories.py")
@@ -180,14 +184,15 @@ def profile_bpe_training() -> None:
     print("PROFILING BPE TRAINING")
     print("=" * 60)
 
-    sample_path = "data/owt_valid.txt"
-    if Path(sample_path).exists():
+    project_root = Path.cwd()
+    sample_path = project_root / "data" / "owt_valid.txt"
+    if sample_path.exists():
         print(f"Profiling with validation file: {sample_path}")
 
         profiler = cProfile.Profile()
         profiler.enable()
 
-        _, _ = train_bpe(input_path=sample_path, vocab_size=2000, special_tokens=["<|endoftext|>"])
+        _, _ = train_bpe(input_path=str(sample_path), vocab_size=2000, special_tokens=["<|endoftext|>"])
 
         profiler.disable()
 

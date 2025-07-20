@@ -154,7 +154,8 @@ def encode_dataset_to_numpy(
     print(f"Saved {len(token_array):,} tokens to {output_path}")
     print(f"Array shape: {token_array.shape}")
     print(f"Array dtype: {token_array.dtype}")
-    print(f"File size: {os.path.getsize(str(output_path) + '.npy') / (1024 * 1024):.1f} MB")
+    output_file = Path(str(output_path) + ".npy")
+    print(f"File size: {output_file.stat().st_size / (1024 * 1024):.1f} MB")
 
 
 def run_experiments() -> None:
@@ -169,25 +170,29 @@ def run_experiments() -> None:
 
     print("\n1. Loading tokenizers...")
 
+    project_root = Path.cwd()
+    output_dir = project_root / "output"
+
     ts_tokenizer = Tokenizer.from_files(
-        vocab_filepath="../output/tinystories_vocab.json",
-        merges_filepath="../output/tinystories_merges.pkl",
+        vocab_filepath=str(output_dir / "tinystories_vocab.json"),
+        merges_filepath=str(output_dir / "tinystories_merges.pkl"),
         special_tokens=["<|endoftext|>"],
     )
     print(f"  TinyStories tokenizer loaded (vocab size: {len(ts_tokenizer.vocab)})")
 
     owt_tokenizer = Tokenizer.from_files(
-        vocab_filepath="../output/openwebtext_vocab.json",
-        merges_filepath="../output/openwebtext_merges.pkl",
+        vocab_filepath=str(output_dir / "openwebtext_vocab.json"),
+        merges_filepath=str(output_dir / "openwebtext_merges.pkl"),
         special_tokens=["<|endoftext|>"],
     )
     print(f"  OpenWebText tokenizer loaded (vocab size: {len(owt_tokenizer.vocab)})")
 
     print("\n2. Part (a): Sampling documents and calculating compression ratios...")
 
-    ts_docs = sample_documents_from_file("../data/TinyStoriesV2-GPT4-train.txt", num_docs=10)
+    data_dir = project_root / "data"
+    ts_docs = sample_documents_from_file(data_dir / "TinyStoriesV2-GPT4-train.txt", num_docs=10)
 
-    owt_docs = sample_documents_from_file("../data/owt_train.txt", num_docs=10)
+    owt_docs = sample_documents_from_file(data_dir / "owt_train.txt", num_docs=10)
 
     ts_ratios: list[float] = []
     total_ts_chars = 0
@@ -277,7 +282,8 @@ def run_experiments() -> None:
 
     print("\n5. Part (d): Encoding full datasets...")
 
-    os.makedirs("../data/encoded", exist_ok=True)
+    encoded_dir = data_dir / "encoded"
+    encoded_dir.mkdir(exist_ok=True)
 
     print("  Why uint16 is appropriate:")
     print(f"    TinyStories vocab size: {len(ts_tokenizer.vocab)} (fits in uint16: 0-65535)")
@@ -288,20 +294,20 @@ def run_experiments() -> None:
     print("\n  Encoding TinyStories training dataset...")
     try:
         encode_dataset_to_numpy(
-            ts_tokenizer, "../data/TinyStoriesV2-GPT4-train.txt", "../data/encoded/tinystories_train_tokens"
+            ts_tokenizer, data_dir / "TinyStoriesV2-GPT4-train.txt", encoded_dir / "tinystories_train_tokens"
         )
     except Exception as e:
         print(f"    Error encoding TinyStories: {e}")
 
     print("\n  Encoding OpenWebText training dataset...")
     try:
-        encode_dataset_to_numpy(owt_tokenizer, "../data/owt_train.txt", "../data/encoded/owt_train_tokens")
+        encode_dataset_to_numpy(owt_tokenizer, data_dir / "owt_train.txt", encoded_dir / "owt_train_tokens")
     except Exception as e:
         print(f"    Error encoding OpenWebText training: {e}")
 
     print("\n  Encoding OpenWebText validation dataset...")
     try:
-        encode_dataset_to_numpy(owt_tokenizer, "../data/owt_valid.txt", "../data/encoded/owt_valid_tokens")
+        encode_dataset_to_numpy(owt_tokenizer, data_dir / "owt_valid.txt", encoded_dir / "owt_valid_tokens")
     except Exception as e:
         print(f"    Error encoding OpenWebText validation: {e}")
 
@@ -319,11 +325,16 @@ def run_experiments() -> None:
 
 
 if __name__ == "__main__":
+    project_root = Path.cwd()
+    output_dir = project_root / "output"
+    data_dir = project_root / "data"
+    encoded_dir = data_dir / "encoded"
+
     ts_tokenizer = Tokenizer.from_files(
-        vocab_filepath="output/tinystories_vocab.json",
-        merges_filepath="output/tinystories_merges.pkl",
+        vocab_filepath=str(output_dir / "tinystories_vocab.json"),
+        merges_filepath=str(output_dir / "tinystories_merges.pkl"),
         special_tokens=["<|endoftext|>"],
     )
     encode_dataset_to_numpy(
-        ts_tokenizer, "data/TinyStoriesV2-GPT4-train.txt", "data/encoded/tinystories_train_tokens"
+        ts_tokenizer, data_dir / "TinyStoriesV2-GPT4-valid.txt", encoded_dir / "tinystories_valid_tokens"
     )

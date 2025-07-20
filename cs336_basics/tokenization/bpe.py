@@ -11,6 +11,7 @@ import os
 import re
 from collections import Counter, defaultdict
 from multiprocessing import Pool, cpu_count
+from pathlib import Path
 from typing import Iterable, Iterator
 
 import regex
@@ -94,7 +95,7 @@ def _pretokenize_corpus(input_path: str, special_tokens: list[str]) -> dict[str,
             split_token = special_tokens[0].encode("utf-8")
             boundaries = find_chunk_boundaries(f, num_processes, split_token)
         else:
-            file_size = os.path.getsize(input_path)
+            file_size = Path(input_path).stat().st_size
             chunk_size = file_size // num_processes
             boundaries = [i * chunk_size for i in range(num_processes + 1)]
             boundaries[-1] = file_size

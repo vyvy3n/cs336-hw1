@@ -22,7 +22,9 @@ def train_bpe_on_tinystories() -> dict[str, Any]:
     Returns:
         Dictionary containing training results and statistics
     """
-    input_path = "data/TinyStoriesV2-GPT4-train.txt"
+    # Use pathlib.Path relative to current working directory (project root)
+    project_root = Path.cwd()
+    input_path = project_root / "data" / "TinyStoriesV2-GPT4-train.txt"
     vocab_size = 10_000
     special_tokens = ["<|endoftext|>"]
 
@@ -32,14 +34,14 @@ def train_bpe_on_tinystories() -> dict[str, Any]:
     print(f"Special tokens: {special_tokens}")
     print()
 
-    if not Path(input_path).exists():
+    if not input_path.exists():
         raise FileNotFoundError(f"TinyStories dataset not found at {input_path}. Please run download script first.")
 
     tracemalloc.start()
     start_time = time.time()
 
     print("Starting BPE training...")
-    vocab, merges = train_bpe(input_path=input_path, vocab_size=vocab_size, special_tokens=special_tokens)
+    vocab, merges = train_bpe(input_path=str(input_path), vocab_size=vocab_size, special_tokens=special_tokens)
 
     end_time = time.time()
     _, peak = tracemalloc.get_traced_memory()
@@ -52,7 +54,7 @@ def train_bpe_on_tinystories() -> dict[str, Any]:
     longest_token = max(vocab.values(), key=len)
     longest_token_length = len(longest_token)
 
-    output_dir = Path("output")
+    output_dir = project_root / "output"
     output_dir.mkdir(exist_ok=True)
 
     vocab_path = output_dir / "tinystories_vocab.json"
@@ -106,14 +108,15 @@ def profile_bpe_training() -> None:
     print("PROFILING BPE TRAINING")
     print("=" * 60)
 
-    sample_path = "tests/fixtures/tinystories_sample_5M.txt"
-    if Path(sample_path).exists():
+    project_root = Path.cwd()
+    sample_path = project_root / "tests" / "fixtures" / "tinystories_sample_5M.txt"
+    if sample_path.exists():
         print(f"Profiling with sample file: {sample_path}")
 
         profiler = cProfile.Profile()
         profiler.enable()
 
-        _, _ = train_bpe(input_path=sample_path, vocab_size=1000, special_tokens=["<|endoftext|>"])
+        _, _ = train_bpe(input_path=str(sample_path), vocab_size=1000, special_tokens=["<|endoftext|>"])
 
         profiler.disable()
 

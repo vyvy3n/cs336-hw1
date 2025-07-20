@@ -1,6 +1,6 @@
 {
   "train_data_path": "data/encoded/tinystories_train_tokens.npy",
-  "val_data_path": "data/encoded/tinystories_val_tokens.npy",
+  "val_data_path": "data/encoded/tinystories_valid_tokens.npy",
   "vocab_size": 10000,
   "context_length": 256,
   "d_model": 512,
