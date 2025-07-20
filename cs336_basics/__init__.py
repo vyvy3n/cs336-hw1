@@ -29,7 +29,7 @@ from cs336_basics.generation.decoding import (
 
 # Loss functions
 from cs336_basics.loss.cross_entropy import cross_entropy
-from cs336_basics.nn.activations import SwiGLU, softmax
+from cs336_basics.nn.activations import SwiGLU, silu, softmax
 from cs336_basics.nn.attention import MultiHeadSelfAttention, RotaryPositionalEmbedding, scaled_dot_product_attention
 from cs336_basics.nn.layers import Embedding, Linear, RMSNorm
 
@@ -58,6 +58,7 @@ __all__ = [
     "RotaryPositionalEmbedding",
     "scaled_dot_product_attention",
     "SwiGLU",
+    "silu",
     "softmax",
     # Tokenization
     "Tokenizer",

@@ -1,6 +1,6 @@
 """Neural network components for Transformer models."""
 
-from cs336_basics.nn.activations import SwiGLU, softmax
+from cs336_basics.nn.activations import SwiGLU, silu, softmax
 from cs336_basics.nn.attention import (
     MultiHeadSelfAttention,
     RotaryPositionalEmbedding,
@@ -12,6 +12,7 @@ from cs336_basics.nn.models import TransformerBlock, TransformerLM
 __all__ = [
     # Activations
     "SwiGLU",
+    "silu",
     "softmax",
     # Attention mechanisms
     "MultiHeadSelfAttention",

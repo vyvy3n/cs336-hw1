@@ -73,7 +73,7 @@ class SwiGLU(nn.Module):
         gate = self.w1(x)
         value = self.w3(x)
 
-        silu_gate = gate * torch.sigmoid(gate)
+        silu_gate = silu(gate)
         gated_value = silu_gate * value
 
         output = self.w2(gated_value)
@@ -82,6 +82,24 @@ class SwiGLU(nn.Module):
     def extra_repr(self) -> str:
         """String representation for debugging."""
         return f"d_model={self.d_model}, d_ff={self.d_ff}"
+
+
+def silu(input: Float[torch.Tensor, "..."]) -> Float[torch.Tensor, "..."]:
+    """
+    Apply the SiLU (Sigmoid Linear Unit) activation function element-wise.
+
+    SiLU, also known as Swish, is a smooth, non-monotonic activation function
+    that has been shown to work well in deep neural networks.
+
+    Formula: SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
+
+    Args:
+        input: Input tensor with arbitrary shape
+
+    Returns:
+        Output tensor with same shape as input, with SiLU applied element-wise
+    """
+    return input * torch.sigmoid(input)
 
 
 def softmax(input: Float[torch.Tensor, "..."], dim: int) -> Float[torch.Tensor, "..."]:
