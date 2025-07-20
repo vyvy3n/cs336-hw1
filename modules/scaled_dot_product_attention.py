@@ -9,7 +9,10 @@ import math
 
 
 def scaled_dot_product_attention(
-    Q: Tensor, K: Tensor, V: Tensor, mask: Optional[Tensor] = None
+    Q: Tensor,
+    K: Tensor,
+    V: Tensor,
+    mask: Optional[Tensor] = None,
 ) -> Tensor:
     """
     Computes the scaled dot-product attention.

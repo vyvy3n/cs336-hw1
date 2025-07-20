@@ -20,6 +20,26 @@ from modules.rope import RotaryPositionalEmbedding
 from modules.softmax import softmax
 from modules.scaled_dot_product_attention import scaled_dot_product_attention
 from modules.attention import CausalMultiHeadSelfAttention
+from modules.transfomer_block import TransformerBlock
+
+
+def detect_device() -> str:
+    """
+    Detects the most appropriate device available on the current system.
+
+    Returns:
+        str: 'cuda' for NVIDIA GPUs,
+             'mps' for Apple Silicon (Mac M1/M2),
+             'cpu' as a fallback.
+    """
+    if torch.cuda.is_available():
+        return "cuda"
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
+        return "mps"
+    return "cpu"
 
 
 def run_linear(
@@ -315,7 +335,28 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    device = torch.device(detect_device())
+    in_features = in_features.to(device)
+
+    transformer_block = TransformerBlock(
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        max_seq_len=max_seq_len,
+        theta=theta,
+        device=device,
+    )
+    transformer_block.mha.Q.weight.data = weights["attn.q_proj.weight"].to(device)
+    transformer_block.mha.K.weight.data = weights["attn.k_proj.weight"].to(device)
+    transformer_block.mha.V.weight.data = weights["attn.v_proj.weight"].to(device)
+    transformer_block.mha.O.weight.data = weights["attn.output_proj.weight"].to(device)
+    transformer_block.rms_norm_1.gain.data = weights["ln1.weight"].to(device)
+    transformer_block.rms_norm_2.gain.data = weights["ln2.weight"].to(device)
+    transformer_block.swiglu.w1.weight.data = weights["ffn.w1.weight"].to(device)
+    transformer_block.swiglu.w2.weight.data = weights["ffn.w2.weight"].to(device)
+    transformer_block.swiglu.w3.weight.data = weights["ffn.w3.weight"].to(device)
+
+    return transformer_block(in_features)
 
 
 def run_transformer_lm(
@@ -342,7 +383,7 @@ def run_transformer_lm(
         num_heads (int): Number of heads to use in multi-headed attention. `d_model` must be
             evenly divisible by `num_heads`.
         d_ff (int): Dimensionality of the feed-forward inner layer (section 3.3).
-        rope_theta (float): The RoPE $\Theta$ parameter.
+        rope_theta (float): The RoPE $Theta$ parameter.
         weights (dict[str, Tensor]):
             State dict of our reference implementation. {num_layers} refers to an
             integer between `0` and `num_layers - 1` (the layer index).

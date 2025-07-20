@@ -18,6 +18,7 @@ class RotaryPositionalEmbedding(nn.Module):
         max_seq_len: int,
         theta: float = 10000.0,
         device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ):
         """
         Constructs the RoPE module.
@@ -33,10 +34,11 @@ class RotaryPositionalEmbedding(nn.Module):
         # It's recommended to store these in non-learnable buffers using
         # self.register_buffer("sin_cached", ...)
         # self.register_buffer("cos_cached", ...)
+        factory_kwargs = {'device': device, 'dtype': dtype}
         if d_k % 2 != 0:
             raise ValueError("d_k must be even.")
-        dim = torch.arange(1, d_k/2+1)
-        sequence = torch.arange(max_seq_len)
+        dim = torch.arange(1, d_k/2+1, **factory_kwargs)
+        sequence = torch.arange(max_seq_len, **factory_kwargs)
         theta_i_k = einsum(sequence, theta ** (-2 * (dim-1) / d_k), "i,k->i k")
         self.register_buffer(
             "rope_cache",

@@ -22,6 +22,8 @@ class CausalMultiHeadSelfAttention(nn.Module):
         num_heads: int,
         max_seq_len: int,
         theta: float = 10000.0,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ):
         """
         Constructs the CausalMultiHeadSelfAttention module.
@@ -33,6 +35,8 @@ class CausalMultiHeadSelfAttention(nn.Module):
             theta: The theta parameter for RoPE.
         """
         super().__init__()
+        factory_kwargs = {"device": device, "dtype": dtype}
+        self.device = device
         assert d_model % num_heads == 0
         self.d_model = d_model
         self.num_heads = num_heads
@@ -46,14 +50,22 @@ class CausalMultiHeadSelfAttention(nn.Module):
 
         # Your implementation for initializing the RoPE module goes here.
         # self.rope = RotaryPositionalEmbedding(...)
-        self.Q = Linear(d_model, d_model)
-        self.K = Linear(d_model, d_model)
-        self.V = Linear(d_model, d_model)
-        self.O = Linear(d_model, d_model)
+        self.Q = Linear(d_model, d_model, **factory_kwargs)
+        self.K = Linear(d_model, d_model, **factory_kwargs)
+        self.V = Linear(d_model, d_model, **factory_kwargs)
+        self.O = Linear(d_model, d_model, **factory_kwargs)
         self.d_k = d_model // num_heads
 
         self.rope = RotaryPositionalEmbedding(
-            d_k=d_model / num_heads, max_seq_len=max_seq_len, theta=theta
+            d_k=d_model / num_heads,
+            max_seq_len=max_seq_len,
+            theta=theta,
+            **factory_kwargs,
+        )
+        self.register_buffer(
+            "causal_mask",
+            torch.tril(torch.ones(max_seq_len, max_seq_len, **factory_kwargs)).bool(),
+            persistent=False,
         )
 
     def forward(self, x: Tensor, token_positions: Optional[Tensor] = None) -> Tensor:
@@ -91,6 +103,7 @@ class CausalMultiHeadSelfAttention(nn.Module):
             query = self.rope(query, token_positions)
             key = self.rope(key, token_positions)
         T = x.shape[-2]
-        causal_mask = torch.tril(torch.ones(T, T)).bool()
-        attention = scaled_dot_product_attention(query, key, value, causal_mask)
+        attention = scaled_dot_product_attention(
+            query, key, value, self.causal_mask[:T, :T]
+        )
         return self.O(rearrange(attention, "... n_head T d_v -> ... T (n_head d_v)"))
