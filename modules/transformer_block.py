@@ -42,7 +42,7 @@ class TransformerBlock(nn.Module):
         # Your implementation for initializing the CausalMultiHeadSelfAttention,
         # SwiGLU, and two RMSNorm layers goes here.
         factory_kwargs = {"device": device, "dtype": dtype}
-        self.mha = CausalMultiHeadSelfAttention(
+        self.multihead_self_attention = CausalMultiHeadSelfAttention(
             d_model=d_model,
             num_heads=num_heads,
             max_seq_len=max_seq_len,
@@ -68,6 +68,8 @@ class TransformerBlock(nn.Module):
         # 2. Second residual connection: x = x + FFN(RMSNorm(x))
         seq_len = x.shape[-2]
         token_positions = torch.arange(seq_len, device=x.device)
-        atten = x + self.mha(x=self.rms_norm_1(x), token_positions=token_positions)
+        atten = x + self.multihead_self_attention(
+            x=self.rms_norm_1(x), token_positions=token_positions
+        )
         y = atten + self.swiglu(self.rms_norm_2(atten))
         return y
