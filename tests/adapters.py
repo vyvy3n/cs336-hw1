@@ -19,7 +19,7 @@ from cs336_basics.generation.decoding import (
     generate_completions,
 )
 from cs336_basics.loss.cross_entropy import cross_entropy
-from cs336_basics.nn.activations import SwiGLU, softmax
+from cs336_basics.nn.activations import SwiGLU, silu, softmax
 from cs336_basics.nn.attention import (
     MultiHeadSelfAttention,
     RotaryPositionalEmbedding,
@@ -514,19 +514,19 @@ def run_rmsnorm(
     return rmsnorm(in_features)
 
 
-# def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
-#     """
-#     Given a tensor of inputs, return the output of applying SiLU
-#     to each element.
+def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
+    """
+    Given a tensor of inputs, return the output of applying SiLU
+    to each element.
 
-#     Args:
-#         in_features(Float[Tensor, "..."]): Input features to run SiLU on. Shape is arbitrary.
+    Args:
+        in_features(Float[Tensor, "..."]): Input features to run SiLU on. Shape is arbitrary.
 
-#     Returns:
-#         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
-#         SiLU to each element.
-#     """
-#     raise NotImplementedError
+    Returns:
+        Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
+        SiLU to each element.
+    """
+    return silu(in_features)
 
 
 def run_get_batch(
