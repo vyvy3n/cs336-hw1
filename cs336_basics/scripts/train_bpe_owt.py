@@ -22,7 +22,6 @@ def train_bpe_on_openwebtext() -> dict[str, Any]:
     Returns:
         Dictionary containing training results and statistics
     """
-    # Use pathlib.Path relative to current working directory (project root)
     project_root = Path.cwd()
     input_path = project_root / "data" / "owt_train.txt"
     vocab_size = 32_000

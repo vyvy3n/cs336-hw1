@@ -24,19 +24,14 @@ def cross_entropy(
     Returns:
         scalar cross-entropy loss averaged over the batch
     """
-    # Move targets to the same device as logits
     targets = targets.to(logits.device)
 
-    # Subtract max for numerical stability
     logits_max = logits.max(dim=-1, keepdim=True)[0]
     logits_stable = logits - logits_max
 
-    # Compute log softmax manually for numerical stability
     log_sum_exp = torch.logsumexp(logits_stable, dim=-1, keepdim=True)
     log_softmax = logits_stable - log_sum_exp
 
-    # Gather the log probabilities for the target indices
     target_log_probs = log_softmax.gather(dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
 
-    # Return negative log likelihood (cross entropy)
     return -target_log_probs.mean()

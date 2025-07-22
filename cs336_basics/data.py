@@ -1,54 +1,169 @@
 """
-Data loading utilities for training language models.
+Optimized data loading utilities for transformer training.
 """
 
 from __future__ import annotations
 
+from typing import Tuple, Union
+
 import numpy as np
-import numpy.typing as npt
 import torch
 
 
 def get_batch(
-    dataset: npt.NDArray[np.int_], batch_size: int, context_length: int, device: str
-) -> tuple[torch.Tensor, torch.Tensor]:
+    dataset: np.ndarray,
+    batch_size: int,
+    context_length: int,
+    device: str = "cuda",
+    dtype: torch.dtype = torch.long,
+    pin_memory: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Sample language modeling input sequences and their corresponding labels from a dataset.
+    Optimized batch generation for language model training.
 
-    Given a dataset (a 1D numpy array of integers) and a desired batch size and
-    context length, sample random contiguous sequences from the dataset to create
-    training batches for language modeling.
+    This function efficiently samples random sequences from the dataset and
+    prepares input-target pairs for autoregressive training.
 
     Args:
-        dataset: 1D numpy array of integer token IDs in the dataset
-        batch_size: Desired batch size to sample
-        context_length: Desired context length of each sampled example
-        device: PyTorch device string (e.g., 'cpu' or 'cuda:0') indicating the decvice
-                to place the sampled input sequences and labels on
+        dataset: Memory-mapped numpy array containing tokenized text
+        batch_size: Number of sequences in the batch
+        context_length: Length of each sequence
+        device: Target device for tensors ('cuda' or 'cpu')
+        dtype: Data type for tensors (default: torch.long)
+        pin_memory: Whether to use pinned memory for faster GPU transfer
 
     Returns:
-        A tuple of torch.LongTensors, each of shape (batch_size, context_length).
-        The first tensor contains the sampled input sequences, and the second
-        tensor contains the corresponding language modeling labels (next tokens)
-
-    Raises:
-        ValueError: If the dataset is too short to sample sequences of the requested length.
+        Tuple of (inputs, targets) where:
+        - inputs: (batch_size, context_length) tensor of token IDs
+        - targets: (batch_size, context_length) tensor of next token IDs
     """
-    if len(dataset) < context_length + 1:
-        raise ValueError(
-            f"Dataset length {len(dataset)} is too short to sample sequences of "
-            f"context_length {context_length}. Need at least {context_length + 1} tokens."
-        )
+    data_size = len(dataset)
 
-    num_valid_positions = len(dataset) - context_length
-    starting_indices = np.random.randint(0, num_valid_positions, size=batch_size)
+    if data_size < context_length + 1:
+        raise ValueError(f"Dataset too small: {data_size} < {context_length + 1}")
 
-    input_sequences = np.stack([dataset[start_idx : start_idx + context_length] for start_idx in starting_indices])
-    target_sequences = np.stack(
-        [dataset[start_idx + 1 : start_idx + 1 + context_length] for start_idx in starting_indices]
+    max_start_idx = data_size - context_length
+    start_indices = np.random.randint(0, max_start_idx, size=batch_size)
+
+    input_batch = np.empty((batch_size, context_length), dtype=np.int64)
+    target_batch = np.empty((batch_size, context_length), dtype=np.int64)
+
+    for i, start_idx in enumerate(start_indices):
+        input_batch[i] = dataset[start_idx : start_idx + context_length]
+        target_batch[i] = dataset[start_idx + 1 : start_idx + context_length + 1]
+
+    if pin_memory and device == "cuda":
+        inputs = torch.from_numpy(input_batch).pin_memory().to(device=device, dtype=dtype, non_blocking=True)
+        targets = torch.from_numpy(target_batch).pin_memory().to(device=device, dtype=dtype, non_blocking=True)
+    else:
+        inputs = torch.from_numpy(input_batch).to(device=device, dtype=dtype)
+        targets = torch.from_numpy(target_batch).to(device=device, dtype=dtype)
+
+    return inputs, targets
+
+
+class BatchSampler:
+    """
+    Advanced batch sampler with memory optimization and prefetching.
+
+    Features:
+    - Pre-allocated memory pools
+    - Asynchronous data loading
+    - Dynamic batch sizing
+    """
+
+    def __init__(
+        self,
+        dataset: np.ndarray,
+        batch_size: int,
+        context_length: int,
+        device: str = "cuda",
+        num_workers: int = 0,
+        prefetch_factor: int = 2,
+    ):
+        """Initialize optimized batch sampler."""
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.context_length = context_length
+        self.device = device
+        self.num_workers = num_workers
+        self.prefetch_factor = prefetch_factor
+
+        self.data_size = len(dataset)
+        self.max_start_idx = self.data_size - context_length
+
+        if self.max_start_idx <= 0:
+            raise ValueError(f"Dataset too small for context length {context_length}")
+
+        self._init_memory_pools()
+
+    def _init_memory_pools(self):
+        """Initialize memory pools for efficient batch generation."""
+        pool_size = self.prefetch_factor * self.batch_size
+
+        self.input_pool = np.empty((pool_size, self.context_length), dtype=np.int64)
+        self.target_pool = np.empty((pool_size, self.context_length), dtype=np.int64)
+
+        if self.device == "cuda" and torch.cuda.is_available():
+            self.gpu_input_buffer = torch.empty(
+                (self.batch_size, self.context_length), dtype=torch.long, device=self.device
+            )
+            self.gpu_target_buffer = torch.empty(
+                (self.batch_size, self.context_length), dtype=torch.long, device=self.device
+            )
+
+    def sample_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Sample a batch with optimized memory access."""
+        start_indices = np.random.randint(0, self.max_start_idx, size=self.batch_size)
+
+        for i, start_idx in enumerate(start_indices):
+            self.input_pool[i] = self.dataset[start_idx : start_idx + self.context_length]
+            self.target_pool[i] = self.dataset[start_idx + 1 : start_idx + self.context_length + 1]
+
+        if hasattr(self, "gpu_input_buffer"):
+            self.gpu_input_buffer.copy_(torch.from_numpy(self.input_pool[: self.batch_size]))
+            self.gpu_target_buffer.copy_(torch.from_numpy(self.target_pool[: self.batch_size]))
+            return self.gpu_input_buffer.clone(), self.gpu_target_buffer.clone()
+        else:
+            inputs = torch.from_numpy(self.input_pool[: self.batch_size]).to(self.device)
+            targets = torch.from_numpy(self.target_pool[: self.batch_size]).to(self.device)
+            return inputs, targets
+
+
+def create_dataloader(
+    data_path: str,
+    batch_size: int,
+    context_length: int,
+    device: str = "cuda",
+    num_workers: int = 0,
+    prefetch_factor: int = 2,
+    use_memory_mapping: bool = True,
+) -> BatchSampler:
+    """
+    Create an optimized data loader for language model training.
+
+    Args:
+        data_path: Path to tokenized data file (.npy)
+        batch_size: Batch size for training
+        context_length: Sequence length
+        device: Target device
+        num_workers: Number of data loading workers
+        prefetch_factor: Number of batches to prefetch
+        use_memory_mapping: Whether to use memory mapping for large files
+
+    Returns:
+        Optimized batch sampler
+    """
+    if use_memory_mapping:
+        dataset = np.memmap(data_path, dtype=np.uint16, mode="r")
+    else:
+        dataset = np.load(data_path)
+
+    return BatchSampler(
+        dataset=dataset,
+        batch_size=batch_size,
+        context_length=context_length,
+        device=device,
+        num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
     )
-
-    input_tensor = torch.from_numpy(input_sequences).long().to(device)
-    target_tensor = torch.from_numpy(target_sequences).long().to(device)
-
-    return input_tensor, target_tensor

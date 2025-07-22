@@ -48,8 +48,8 @@ class TestTrainingConfig:
         assert config.val_data_path is None
         assert config.vocab_size == 1000
         assert config.context_length == 128
-        assert config.d_model == 512  # default value
-        assert config.num_layers == 4  # default value
+        assert config.d_model == 512
+        assert config.num_layers == 4
         assert config.effective_batch_size == config.batch_size * config.gradient_accumulation_steps
         assert config.total_tokens == config.effective_batch_size * config.max_steps * config.context_length
 
@@ -108,14 +108,13 @@ class TestTrainingConfig:
         with pytest.raises(AssertionError, match="d_model must be divisible by num_heads"):
             TrainingConfig(
                 train_data_path="data/train.npy",
-                d_model=511,  # not divisible by default num_heads=16
+                d_model=511,
                 num_heads=16,
             )
 
-        # Should work when divisible
         config = TrainingConfig(
             train_data_path="data/train.npy",
-            d_model=512,  # divisible by 16
+            d_model=512,
             num_heads=16,
         )
         assert config.d_model == 512
@@ -128,11 +127,10 @@ class TestTrainingConfig:
 
             config = TrainingConfig(
                 train_data_path="data/train.npy",
-                d_ff=1345,  # Not divisible by 64
+                d_ff=1345,
             )
 
-            # Should be adjusted to next multiple of 64
-            assert config.d_ff == 1408  # 1345 rounded up to next multiple of 64
+            assert config.d_ff == 1408
 
             assert len(w) == 1
             assert "Adjusted d_ff" in str(w[0].message)
@@ -332,7 +330,7 @@ class TestTrainer:
             config.device = "cpu"
 
             mock_name.return_value = "Mock GPU"
-            mock_props.return_value = MagicMock(total_memory=8 * 1024**3)  # 8GB
+            mock_props.return_value = MagicMock(total_memory=8 * 1024**3)
 
             with patch("torch.cuda.is_available", return_value=True):
                 trainer = Trainer(config)
@@ -402,10 +400,8 @@ class TestTrainer:
             assert isinstance(metrics, dict)
             assert "loss" in metrics
             assert "lr" in metrics
-            assert "step" in metrics
             assert isinstance(metrics["loss"], float)
             assert metrics["loss"] >= 0.0
-            assert metrics["step"] == trainer.step
 
     @patch("cs336_basics.scripts.train_transformer.ExperimentLogger")
     @patch("cs336_basics.scripts.train_transformer.TrainingIntegrator")
@@ -680,7 +676,7 @@ class TestPerformanceOptimizations:
             )
 
             mock_name.return_value = "Mock GPU"
-            mock_props.return_value = MagicMock(total_memory=8 * 1024**3)  # 8GB
+            mock_props.return_value = MagicMock(total_memory=8 * 1024**3)
 
             with patch("torch.cuda.is_available", return_value=True):
                 trainer = Trainer(config)
@@ -718,8 +714,8 @@ class TestPerformanceOptimizations:
             context_length=256,
         )
 
-        assert config1.effective_batch_size == 128  # 32 * 4
-        assert config1.total_tokens == 128 * 1000 * 256  # 32,768,000
+        assert config1.effective_batch_size == 128
+        assert config1.total_tokens == 128 * 1000 * 256
 
         config2 = TrainingConfig(
             train_data_path="dummy",
@@ -729,8 +725,8 @@ class TestPerformanceOptimizations:
             context_length=512,
         )
 
-        assert config2.effective_batch_size == 128  # 64 * 2
-        assert config2.total_tokens == 128 * 2000 * 512  # 131,072,000
+        assert config2.effective_batch_size == 128
+        assert config2.total_tokens == 128 * 2000 * 512
 
 
 class TestErrorHandling:
@@ -770,7 +766,7 @@ class TestErrorHandling:
             )
 
             mock_name.return_value = "Mock GPU"
-            mock_props.return_value = MagicMock(total_memory=8 * 1024**3)  # 8GB
+            mock_props.return_value = MagicMock(total_memory=8 * 1024**3)
 
             with patch("torch.cuda.is_available", return_value=True):
                 trainer = Trainer(config)

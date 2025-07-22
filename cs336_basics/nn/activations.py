@@ -45,19 +45,17 @@ class SwiGLU(nn.Module):
 
         self.d_model = d_model
 
-        # Set d_ff to approximately 8/3 * d_model, rounded to multiple of 64
         if d_ff is None:
             d_ff = int(8 * d_model / 3)
-            # Round to nearest multiple of 64 for hardware efficiency
             d_ff = ((d_ff + 63) // 64) * 64
 
         self.d_ff = d_ff
 
         factory_kwargs = {"device": device, "dtype": dtype}
 
-        self.w1 = Linear(d_model, d_ff, **factory_kwargs)  # Gate projection
-        self.w2 = Linear(d_ff, d_model, **factory_kwargs)  # Output projection
-        self.w3 = Linear(d_model, d_ff, **factory_kwargs)  # Value projection
+        self.w1 = Linear(d_model, d_ff, **factory_kwargs)
+        self.w2 = Linear(d_ff, d_model, **factory_kwargs)
+        self.w3 = Linear(d_model, d_ff, **factory_kwargs)
 
     def forward(self, x: Float[torch.Tensor, "... d_model"]) -> Float[torch.Tensor, "... d_model"]:
         """
