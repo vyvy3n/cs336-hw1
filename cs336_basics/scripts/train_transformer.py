@@ -227,7 +227,10 @@ class Trainer:
 
         self.experiment_logger.log_hyperparameters(**asdict(config))
 
-        self.training_integrator = TrainingIntegrator(self.experiment_logger)
+        self.training_integrator = TrainingIntegrator(
+            self.experiment_logger,
+            hardware_log_interval=self.config.log_interval,
+        )
 
         self._setup_device()
 
@@ -491,10 +494,15 @@ class Trainer:
             )
 
             if self.step % self.config.log_interval == 0:
+                tokens_this_step = self.config.effective_batch_size * self.config.context_length
+                samples_this_step = self.config.effective_batch_size
+
                 self.training_integrator.log_training_step(
                     step=self.step,
                     train_loss=metrics["loss"],
                     learning_rate=metrics["lr"],
+                    tokens_processed=tokens_this_step,
+                    samples_processed=samples_this_step,
                     step_time=step_time,
                     tokens_per_sec=tokens_per_sec,
                 )
