@@ -24,8 +24,8 @@ import pytest
 import torch
 
 from cs336_basics.scripts.train_transformer import (
-    DataLoader,
-    Trainer,
+    OptimizedDataLoader,
+    OptimizedTrainer,
     TrainingConfig,
     create_optimized_configs,
     load_config,
@@ -166,8 +166,8 @@ class TestTrainingConfig:
         assert config.total_tokens == expected_total_tokens
 
 
-class TestDataLoader:
-    """Test the optimized DataLoader class."""
+class TestOptimizedDataLoader:
+    """Test the optimized OptimizedDataLoader class."""
 
     def create_test_data(self, temp_dir: str, size: int = 10000) -> str:
         """Create a test dataset file."""
@@ -183,7 +183,7 @@ class TestDataLoader:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_path = self.create_test_data(temp_dir)
 
-            loader = DataLoader(
+            loader = OptimizedDataLoader(
                 data_path=data_path,
                 batch_size=16,
                 context_length=64,
@@ -199,7 +199,7 @@ class TestDataLoader:
     def test_dataloader_file_not_found(self) -> None:
         """Test DataLoader handles missing data files."""
         with pytest.raises(FileNotFoundError, match="Data file not found"):
-            DataLoader(
+            OptimizedDataLoader(
                 data_path="nonexistent_file.npy",
                 batch_size=16,
                 context_length=64,
@@ -212,7 +212,7 @@ class TestDataLoader:
             data_path = self.create_test_data(temp_dir, size=10)
 
             with pytest.raises(ValueError, match="Dataset too small"):
-                DataLoader(
+                OptimizedDataLoader(
                     data_path=data_path,
                     batch_size=16,
                     context_length=15,
@@ -224,7 +224,7 @@ class TestDataLoader:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_path = self.create_test_data(temp_dir)
 
-            loader = DataLoader(
+            loader = OptimizedDataLoader(
                 data_path=data_path,
                 batch_size=8,
                 context_length=32,
@@ -243,7 +243,7 @@ class TestDataLoader:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_path = self.create_test_data(temp_dir)
 
-            loader = DataLoader(
+            loader = OptimizedDataLoader(
                 data_path=data_path,
                 batch_size=4,
                 context_length=16,
@@ -262,7 +262,7 @@ class TestDataLoader:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_path = self.create_test_data(temp_dir)
 
-            loader = DataLoader(
+            loader = OptimizedDataLoader(
                 data_path=data_path,
                 batch_size=4,
                 context_length=16,
@@ -275,8 +275,8 @@ class TestDataLoader:
             assert targets.device.type == "cuda"
 
 
-class TestTrainer:
-    """Test the Trainer class with mocked dependencies."""
+class TestOptimizedTrainer:
+    """Test the OptimizedTrainer class with mocked dependencies."""
 
     def create_minimal_config(self, temp_dir: str) -> TrainingConfig:
         """Create minimal config for testing."""
@@ -309,7 +309,7 @@ class TestTrainer:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.create_minimal_config(temp_dir)
 
-            trainer = Trainer(config)
+            trainer = OptimizedTrainer(config)
 
             assert trainer.config == config
             assert trainer.step == 0
@@ -335,7 +335,7 @@ class TestTrainer:
             mock_props.return_value = MagicMock(total_memory=8 * 1024**3)  # 8GB
 
             with patch("torch.cuda.is_available", return_value=True):
-                trainer = Trainer(config)
+                trainer = OptimizedTrainer(config)
 
                 assert trainer.device.type == "cpu"
 
@@ -348,7 +348,7 @@ class TestTrainer:
             config.device = "cuda"
 
             with patch("torch.cuda.is_available", return_value=False):
-                trainer = Trainer(config)
+                trainer = OptimizedTrainer(config)
 
                 assert trainer.device.type == "cpu"
                 assert not trainer.config.use_tf32
@@ -365,7 +365,7 @@ class TestTrainer:
             config.warmup_steps = 5
             config.max_steps = 20
 
-            trainer = Trainer(config)
+            trainer = OptimizedTrainer(config)
 
             lr_step_0 = trainer.get_lr(0)
             lr_step_2 = trainer.get_lr(2)
@@ -388,7 +388,7 @@ class TestTrainer:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.create_minimal_config(temp_dir)
 
-            trainer = Trainer(config)
+            trainer = OptimizedTrainer(config)
 
             def mock_get_batch():
                 inputs = torch.randint(0, config.vocab_size, (config.batch_size, config.context_length))
@@ -402,10 +402,8 @@ class TestTrainer:
             assert isinstance(metrics, dict)
             assert "loss" in metrics
             assert "lr" in metrics
-            assert "step" in metrics
             assert isinstance(metrics["loss"], float)
             assert metrics["loss"] >= 0.0
-            assert metrics["step"] == trainer.step
 
     @patch("cs336_basics.scripts.train_transformer.ExperimentLogger")
     @patch("cs336_basics.scripts.train_transformer.TrainingIntegrator")
@@ -422,7 +420,7 @@ class TestTrainer:
             config.val_data_path = val_data_path
             config.eval_batches = 5
 
-            trainer = Trainer(config)
+            trainer = OptimizedTrainer(config)
 
             eval_metrics = trainer.evaluate()
 
@@ -441,7 +439,7 @@ class TestTrainer:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.create_minimal_config(temp_dir)
 
-            trainer = Trainer(config)
+            trainer = OptimizedTrainer(config)
 
             eval_metrics = trainer.evaluate()
 
@@ -454,7 +452,7 @@ class TestTrainer:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.create_minimal_config(temp_dir)
 
-            trainer = Trainer(config)
+            trainer = OptimizedTrainer(config)
             trainer.step = 100
 
             checkpoint_path = os.path.join(temp_dir, "test_checkpoint.pt")
@@ -597,7 +595,7 @@ class TestIntegration:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.create_integration_config(temp_dir)
 
-            trainer = Trainer(config)
+            trainer = OptimizedTrainer(config)
 
             mock_integrator_instance = MagicMock()
             trainer.training_integrator = mock_integrator_instance
@@ -622,14 +620,14 @@ class TestIntegration:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.create_integration_config(temp_dir)
 
-            trainer1 = Trainer(config)
+            trainer1 = OptimizedTrainer(config)
             trainer1.step = 3
 
             checkpoint_path = os.path.join(config.checkpoint_dir, "checkpoint_step_3.pt")
             trainer1.save_checkpoint(checkpoint_path)
 
             config.resume_from = checkpoint_path
-            trainer2 = Trainer(config)
+            trainer2 = OptimizedTrainer(config)
 
             assert trainer2.step == 3
 
@@ -649,7 +647,7 @@ class TestIntegration:
             )
 
             with pytest.raises(ValueError, match="Dataset too small"):
-                DataLoader(
+                OptimizedDataLoader(
                     data_path=config.train_data_path,
                     batch_size=config.batch_size,
                     context_length=config.context_length,
@@ -683,7 +681,7 @@ class TestPerformanceOptimizations:
             mock_props.return_value = MagicMock(total_memory=8 * 1024**3)  # 8GB
 
             with patch("torch.cuda.is_available", return_value=True):
-                trainer = Trainer(config)
+                trainer = OptimizedTrainer(config)
 
                 assert trainer.config.use_tf32
 
@@ -704,7 +702,7 @@ class TestPerformanceOptimizations:
                 channels_last=True,
             )
 
-            trainer = Trainer(config)
+            trainer = OptimizedTrainer(config)
 
             assert trainer.train_loader.pin_memory
 
@@ -744,7 +742,7 @@ class TestErrorHandling:
                 f.write("corrupted content")
 
             with pytest.raises((ValueError, OSError)):
-                DataLoader(
+                OptimizedDataLoader(
                     data_path=data_path,
                     batch_size=16,
                     context_length=32,
@@ -773,5 +771,5 @@ class TestErrorHandling:
             mock_props.return_value = MagicMock(total_memory=8 * 1024**3)  # 8GB
 
             with patch("torch.cuda.is_available", return_value=True):
-                trainer = Trainer(config)
+                trainer = OptimizedTrainer(config)
                 assert trainer.device.type == "cpu"

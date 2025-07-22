@@ -186,9 +186,9 @@ def run_multihead_self_attention(
     )
 
     with torch.no_grad():
-        mha.q_proj.weight.copy_(q_proj_weight)
-        mha.k_proj.weight.copy_(k_proj_weight)
-        mha.v_proj.weight.copy_(v_proj_weight)
+        # Concatenate Q, K, V weights for the fused projection
+        qkv_weight = torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], dim=0)
+        mha.qkv_proj.weight.copy_(qkv_weight)
         mha.output_proj.weight.copy_(o_proj_weight)
 
     output = mha(in_features, rope=None, token_positions=None)
@@ -240,9 +240,9 @@ def run_multihead_self_attention_with_rope(
     rope = RotaryPositionalEmbedding(theta=theta, d_k=d_k, max_seq_len=max_seq_len, device=in_features.device)
 
     with torch.no_grad():
-        mha.q_proj.weight.copy_(q_proj_weight)
-        mha.k_proj.weight.copy_(k_proj_weight)
-        mha.v_proj.weight.copy_(v_proj_weight)
+        # Concatenate Q, K, V weights for the fused projection
+        qkv_weight = torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], dim=0)
+        mha.qkv_proj.weight.copy_(qkv_weight)
         mha.output_proj.weight.copy_(o_proj_weight)
 
     output = mha(in_features, rope=rope, token_positions=token_positions)
@@ -354,9 +354,11 @@ def run_transformer_block(
     rope = RotaryPositionalEmbedding(theta=theta, d_k=d_k, max_seq_len=max_seq_len, device=in_features.device)
 
     with torch.no_grad():
-        block.attn.q_proj.weight.copy_(weights["attn.q_proj.weight"])
-        block.attn.k_proj.weight.copy_(weights["attn.k_proj.weight"])
-        block.attn.v_proj.weight.copy_(weights["attn.v_proj.weight"])
+        # Concatenate Q, K, V weights for the fused projection
+        qkv_weight = torch.cat(
+            [weights["attn.q_proj.weight"], weights["attn.k_proj.weight"], weights["attn.v_proj.weight"]], dim=0
+        )
+        block.attn.qkv_proj.weight.copy_(qkv_weight)
         block.attn.output_proj.weight.copy_(weights["attn.output_proj.weight"])
 
         block.ln1.weight.copy_(weights["ln1.weight"])
@@ -398,7 +400,7 @@ def run_transformer_lm(
         num_heads (int): Number of heads to use in multi-headed attention. `d_model` must be
             evenly divisible by `num_heads`.
         d_ff (int): Dimensionality of the feed-forward inner layer (section 3.3).
-        rope_theta (float): The RoPE $\Theta$ parameter.
+        rope_theta (float): The RoPE theta parameter.
         weights (dict[str, Tensor]):
             State dict of our reference implementation. {num_layers} refers to an
             integer between `0` and `num_layers - 1` (the layer index).
@@ -471,9 +473,16 @@ def run_transformer_lm(
         for layer_idx in range(num_layers):
             layer = model.layers[layer_idx]
 
-            layer.attn.q_proj.weight.copy_(weights[f"layers.{layer_idx}.attn.q_proj.weight"])
-            layer.attn.k_proj.weight.copy_(weights[f"layers.{layer_idx}.attn.k_proj.weight"])
-            layer.attn.v_proj.weight.copy_(weights[f"layers.{layer_idx}.attn.v_proj.weight"])
+            # Concatenate Q, K, V weights for the fused projection
+            qkv_weight = torch.cat(
+                [
+                    weights[f"layers.{layer_idx}.attn.q_proj.weight"],
+                    weights[f"layers.{layer_idx}.attn.k_proj.weight"],
+                    weights[f"layers.{layer_idx}.attn.v_proj.weight"],
+                ],
+                dim=0,
+            )
+            layer.attn.qkv_proj.weight.copy_(qkv_weight)
             layer.attn.output_proj.weight.copy_(weights[f"layers.{layer_idx}.attn.output_proj.weight"])
 
             layer.ln1.weight.copy_(weights[f"layers.{layer_idx}.ln1.weight"])

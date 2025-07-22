@@ -1,5 +1,5 @@
 """
-Learning rate scheduling utilities.
+Advanced learning rate scheduling utilities for optimal training.
 """
 
 from __future__ import annotations
@@ -11,11 +11,11 @@ def cosine_learning_rate_schedule(
     iteration: int, max_learning_rate: float, min_learning_rate: float, warmup_iters: int, cosine_cycle_iters: int
 ) -> float:
     """
-    Cosine annealing learning rate schedule with warmup.
+    Cosine annealing learning rate schedule with linear warmup.
 
-    This implements the cosine learning rate schedule used in LLaMA and other modern
-    language models. The schedule has three phases:
-    1. Warmup: linearly increase from 0 to max_learning_rate
+    This implements the cosine learning rate schedule used in modern language models.
+    The schedule has three phases:
+    1. Linear warmup: linearly increase from 0 to max_learning_rate
     2. Cosine annealing: cosine decay from max_learning_rate to min_learning_rate
     3. Post-annealing: constant at min_learning_rate
 
@@ -30,7 +30,7 @@ def cosine_learning_rate_schedule(
         learning rate for the current iteration
     """
     if iteration < warmup_iters:
-        # Warmup phase: linear increase
+        # Linear warmup phase
         return max_learning_rate * iteration / warmup_iters
     elif iteration <= cosine_cycle_iters:
         # Cosine annealing phase
@@ -39,3 +39,229 @@ def cosine_learning_rate_schedule(
     else:
         # Post-annealing phase: constant at minimum
         return min_learning_rate
+
+
+def improved_cosine_schedule(
+    iteration: int,
+    max_learning_rate: float,
+    min_learning_rate: float,
+    warmup_iters: int,
+    total_iters: int,
+    restart_factor: float = 0.0,
+) -> float:
+    """
+    Improved cosine learning rate schedule with better warmup and optional restarts.
+
+    Features:
+    - Smoother warmup transition
+    - More stable convergence
+    - Optional cosine restarts
+
+    Args:
+        iteration: current iteration number
+        max_learning_rate: maximum learning rate
+        min_learning_rate: minimum learning rate
+        warmup_iters: number of warmup iterations
+        total_iters: total number of training iterations
+        restart_factor: factor for cosine restarts (0.0 = no restarts)
+
+    Returns:
+        learning rate for the current iteration
+    """
+    if iteration < warmup_iters:
+        # Improved warmup: smoother transition using cosine
+        warmup_factor = 0.5 * (1 + math.cos(math.pi * (1 - iteration / warmup_iters)))
+        return max_learning_rate * (1 - warmup_factor)
+    else:
+        # Cosine annealing with optional restarts
+        progress = (iteration - warmup_iters) / (total_iters - warmup_iters)
+
+        if restart_factor > 0.0:
+            # Cosine restarts
+            restart_period = int((total_iters - warmup_iters) * restart_factor)
+            if restart_period > 0:
+                progress = progress % (restart_period / (total_iters - warmup_iters))
+                progress = progress * (total_iters - warmup_iters) / restart_period
+
+        cosine_factor = 0.5 * (1 + math.cos(math.pi * progress))
+        return min_learning_rate + (max_learning_rate - min_learning_rate) * cosine_factor
+
+
+def exponential_decay_schedule(
+    iteration: int,
+    initial_lr: float,
+    decay_rate: float,
+    decay_steps: int,
+    staircase: bool = False,
+) -> float:
+    """
+    Exponential decay learning rate schedule.
+
+    Args:
+        iteration: current iteration number
+        initial_lr: initial learning rate
+        decay_rate: decay rate (e.g., 0.96)
+        decay_steps: steps between decay
+        staircase: whether to use staircase decay
+
+    Returns:
+        decayed learning rate
+    """
+    if staircase:
+        decay_factor = decay_rate ** (iteration // decay_steps)
+    else:
+        decay_factor = decay_rate ** (iteration / decay_steps)
+
+    return initial_lr * decay_factor
+
+
+def polynomial_decay_schedule(
+    iteration: int,
+    initial_lr: float,
+    min_lr: float,
+    total_steps: int,
+    power: float = 1.0,
+) -> float:
+    """
+    Polynomial decay learning rate schedule.
+
+    Args:
+        iteration: current iteration number
+        initial_lr: initial learning rate
+        min_lr: minimum learning rate
+        total_steps: total training steps
+        power: polynomial power (1.0 = linear decay)
+
+    Returns:
+        decayed learning rate
+    """
+    if iteration >= total_steps:
+        return min_lr
+
+    decay_factor = (1 - iteration / total_steps) ** power
+    return min_lr + (initial_lr - min_lr) * decay_factor
+
+
+def one_cycle_schedule(
+    iteration: int,
+    max_lr: float,
+    total_steps: int,
+    pct_start: float = 0.3,
+    anneal_strategy: str = "cos",
+    div_factor: float = 25.0,
+    final_div_factor: float = 1e4,
+) -> float:
+    """
+    One-cycle learning rate schedule popular for fast convergence.
+
+    Args:
+        iteration: current iteration number
+        max_lr: maximum learning rate
+        total_steps: total training steps
+        pct_start: percentage of cycle spent increasing learning rate
+        anneal_strategy: annealing strategy ('cos' or 'linear')
+        div_factor: factor for initial learning rate
+        final_div_factor: factor for final learning rate
+
+    Returns:
+        learning rate for current iteration
+    """
+    initial_lr = max_lr / div_factor
+    final_lr = initial_lr / final_div_factor
+
+    step_up = int(total_steps * pct_start)
+    step_down = total_steps - step_up
+
+    if iteration <= step_up:
+        # Increasing phase
+        return initial_lr + (max_lr - initial_lr) * iteration / step_up
+    else:
+        # Decreasing phase
+        progress = (iteration - step_up) / step_down
+
+        if anneal_strategy == "cos":
+            factor = 0.5 * (1 + math.cos(math.pi * progress))
+        else:  # linear
+            factor = 1 - progress
+
+        return final_lr + (max_lr - final_lr) * factor
+
+
+def warmup_then_constant_schedule(
+    iteration: int,
+    target_lr: float,
+    warmup_iters: int,
+    warmup_type: str = "linear",
+) -> float:
+    """
+    Warmup to target learning rate then keep constant.
+
+    Args:
+        iteration: current iteration number
+        target_lr: target learning rate after warmup
+        warmup_iters: number of warmup iterations
+        warmup_type: type of warmup ('linear' or 'cosine')
+
+    Returns:
+        learning rate for current iteration
+    """
+    if iteration < warmup_iters:
+        if warmup_type == "linear":
+            return target_lr * iteration / warmup_iters
+        elif warmup_type == "cosine":
+            factor = 0.5 * (1 - math.cos(math.pi * iteration / warmup_iters))
+            return target_lr * factor
+        else:
+            raise ValueError(f"Unknown warmup_type: {warmup_type}")
+    else:
+        return target_lr
+
+
+def get_scheduler(
+    scheduler_type: str, max_lr: float, min_lr: float = None, warmup_steps: int = 0, total_steps: int = None, **kwargs
+) -> callable:
+    """
+    Factory function to get learning rate scheduler.
+
+    Args:
+        scheduler_type: type of scheduler
+        max_lr: maximum learning rate
+        min_lr: minimum learning rate
+        warmup_steps: warmup steps
+        total_steps: total training steps
+        **kwargs: additional scheduler-specific arguments
+
+    Returns:
+        scheduler function that takes iteration and returns learning rate
+    """
+    if min_lr is None:
+        min_lr = max_lr * 0.1  # Default to 10% of max_lr
+
+    if scheduler_type == "cosine":
+
+        def scheduler(iteration):
+            return cosine_learning_rate_schedule(
+                iteration, max_lr, min_lr, warmup_steps, total_steps or warmup_steps * 10
+            )
+    elif scheduler_type == "improved_cosine":
+
+        def scheduler(iteration):
+            return improved_cosine_schedule(
+                iteration, max_lr, min_lr, warmup_steps, total_steps or warmup_steps * 10, **kwargs
+            )
+    elif scheduler_type == "one_cycle":
+
+        def scheduler(iteration):
+            return one_cycle_schedule(iteration, max_lr, total_steps or warmup_steps * 10, **kwargs)
+    elif scheduler_type == "constant":
+
+        def scheduler(iteration):
+            return warmup_then_constant_schedule(iteration, max_lr, warmup_steps, **kwargs)
+    elif scheduler_type == "polynomial":
+
+        def scheduler(iteration):
+            return polynomial_decay_schedule(iteration, max_lr, min_lr, total_steps or warmup_steps * 10, **kwargs)
+    else:
+        raise ValueError(f"Unknown scheduler_type: {scheduler_type}")
+
+    return scheduler

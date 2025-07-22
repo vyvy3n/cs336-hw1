@@ -1,5 +1,5 @@
 """
-Complete Transformer model implementations.
+Complete Transformer model implementations with performance optimizations.
 """
 
 from __future__ import annotations
@@ -15,17 +15,10 @@ from cs336_basics.nn.layers import Embedding, Linear, RMSNorm
 
 class TransformerBlock(nn.Module):
     """
-    Pre-norm Transformer block with multi-head attention and SwiGLU feed-forward.
+    Optimized Pre-norm Transformer block with gradient checkpointing support.
 
-    This implementation follows the pre-norm design where layer normalization is applied
-    before each sublayer (attention and feed-forward) rather than after. This design
-    has been shown to improve training stability and is used in mordern language models.
-
-    Architecture
-    1. z = x + MultiHeadSelfAttention(RMSNorm(x))
-    2. y = z + SwiGLU(RMSNorm(z))
-
-    Paper: "On Layer Normalization in the Transformer Architecture" (Xiong et.al., 2020)
+    Enhanced with memory efficiency improvements and performance optimizations
+    for modern GPU architectures.
     """
 
     def __init__(
@@ -38,7 +31,7 @@ class TransformerBlock(nn.Module):
         dtype: torch.dtype | None = None,
     ) -> None:
         """
-        Initialize the Transformer block.
+        Initialize the Transformer block with optimizations.
 
         Args:
             d_model: Dimensionality of the model (input/output dimension)
@@ -62,6 +55,9 @@ class TransformerBlock(nn.Module):
         self.ffn = SwiGLU(d_model, d_ff, **factory_kwargs)
         self.ln2 = RMSNorm(d_model, eps, **factory_kwargs)
 
+        # Enable gradient checkpointing support
+        self.use_checkpoint = False
+
     def forward(
         self,
         x: Float[torch.Tensor, "... seq_len d_model"],
@@ -69,7 +65,7 @@ class TransformerBlock(nn.Module):
         token_positions: Int[torch.Tensor, "... seq_len"] | None = None,
     ) -> Float[torch.Tensor, "... seq_len d_model"]:
         """
-        Apply the Transformer block to input.
+        Apply the Transformer block with optional gradient checkpointing.
 
         Args:
             x: Input tensor of shape (..., seq_len, d_model)
@@ -79,6 +75,19 @@ class TransformerBlock(nn.Module):
         Returns:
             Output tensor of same shape as input
         """
+        if self.use_checkpoint and self.training:
+            return torch.utils.checkpoint.checkpoint(self._forward_impl, x, rope, token_positions, use_reentrant=False)
+        else:
+            return self._forward_impl(x, rope, token_positions)
+
+    def _forward_impl(
+        self,
+        x: Float[torch.Tensor, "... seq_len d_model"],
+        rope: RotaryPositionalEmbedding | None = None,
+        token_positions: Int[torch.Tensor, "... seq_len"] | None = None,
+    ) -> Float[torch.Tensor, "... seq_len d_model"]:
+        """Internal forward implementation."""
+        # Pre-norm architecture for better training stability
         normalized_x = self.ln1(x)
         attn_output = self.attn(normalized_x, rope=rope, token_positions=token_positions)
         z = x + attn_output
@@ -96,20 +105,10 @@ class TransformerBlock(nn.Module):
 
 class TransformerLM(nn.Module):
     """
-    Transformer Language Model for autoregressive text generation.
+    Optimized Transformer Language Model with performance enhancements.
 
-    This implementation follows the decoder-only Transformer architecture used in
-    modern language models like GPT. It combines token embeddimgs, multiple
-    Transformer blocks, and a final linear projection to produce next-token predictions.
-
-    Architecture:
-    1. Token Embedding: Maps integer from token IDs to dense vectors.
-    2. Multiple Transformer Blocks: Each with self-attention and feed-forward layers
-    3. Final Layer Normalization: Applied after the last transformer block (pre-norm design)
-    4. Language Model Head: Linear projection to vocabulary size for next-token prediction
-
-    The model uses RoPE (Rotary Position Embedding) for positional information
-    and casual masking to ensure tokens can only attend to previous positions.
+    Enhanced with gradient checkpointing, memory optimizations, and architectural
+    improvements for better training efficiency on modern hardware.
     """
 
     def __init__(
@@ -126,7 +125,7 @@ class TransformerLM(nn.Module):
         dtype: torch.dtype | None = None,
     ) -> None:
         """
-        Initialize the Transformer Language Model.
+        Initialize the Transformer Language Model with optimizations.
 
         Args:
             vocab_size: Size of the vocabulary (number of unique tokens)
@@ -146,6 +145,10 @@ class TransformerLM(nn.Module):
         assert vocab_size > 0, f"vocab_size must be positive, got {vocab_size}"
         assert context_length > 0, f"context_length must be positive, got {context_length}"
         assert num_layers > 0, f"num_layers must be positive, got {num_layers}"
+
+        # Ensure d_ff is optimal for tensor cores (multiple of 64)
+        if d_ff % 64 != 0:
+            d_ff = ((d_ff + 63) // 64) * 64
 
         self.vocab_size = vocab_size
         self.context_length = context_length
@@ -170,23 +173,55 @@ class TransformerLM(nn.Module):
         )
 
         self.ln_final = RMSNorm(d_model, eps, **factory_kwargs)
-
         self.lm_head = Linear(d_model, vocab_size, **factory_kwargs)
+
+        # Performance optimization settings
+        self.use_gradient_checkpointing = False
+        self._gradient_checkpointing_layers = None
+
+    def enable_gradient_checkpointing(self, layers_to_checkpoint: int | None = None) -> None:
+        """
+        Enable gradient checkpointing for memory efficiency.
+
+        Args:
+            layers_to_checkpoint: Number of layers to checkpoint. If None, checkpoints all layers.
+        """
+        self.use_gradient_checkpointing = True
+
+        if layers_to_checkpoint is None:
+            layers_to_checkpoint = self.num_layers
+        else:
+            layers_to_checkpoint = min(layers_to_checkpoint, self.num_layers)
+
+        self._gradient_checkpointing_layers = layers_to_checkpoint
+
+        # Enable checkpointing for specified number of layers (from the beginning)
+        for i, layer in enumerate(self.layers):
+            if i < layers_to_checkpoint:
+                layer.use_checkpoint = True
+                layer.attn.use_checkpoint = True
+            else:
+                layer.use_checkpoint = False
+                layer.attn.use_checkpoint = False
+
+    def disable_gradient_checkpointing(self) -> None:
+        """Disable gradient checkpointing."""
+        self.use_gradient_checkpointing = False
+        for layer in self.layers:
+            layer.use_checkpoint = False
+            layer.attn.use_checkpoint = False
 
     def forward(
         self, input_ids: Int[torch.Tensor, "... batch_size seq_len"]
     ) -> Float[torch.Tensor, "batch_size seq_len vocab_size"]:
         """
-        Forward pass of the Transformer Language Model.
+        Forward pass with optimized memory and compute efficiency.
 
         Args:
             input_ids: Input token IDs of shape (batch_size, seq_len)
-                       Values should be integers in range [0, vocab_size)
-                       seq_len should be <= context_length
 
         Returns:
             Logits tensor of shape (batch_size, seq_len, vocab_size)
-            representing next-token predictions for each position
         """
         batch_size, seq_len = input_ids.shape
 
@@ -194,19 +229,61 @@ class TransformerLM(nn.Module):
             f"Input sequence length ({seq_len}) exceeds context length ({self.context_length})"
         )
 
-        token_positions = torch.arange(seq_len, device=input_ids.device)
+        # Optimize position encoding computation
+        token_positions = torch.arange(seq_len, device=input_ids.device, dtype=torch.long)
         token_positions = token_positions.unsqueeze(0).expand(batch_size, -1)
 
+        # Token embeddings with potential memory optimization
         x = self.token_embeddings(input_ids)
 
+        # Apply transformer layers with optional checkpointing
         for layer in self.layers:
             x = layer(x, rope=self.rope, token_positions=token_positions)
 
+        # Final layer norm and projection
         x = self.ln_final(x)
-
         logits = self.lm_head(x)
 
         return logits
+
+    def get_memory_stats(self) -> dict[str, float]:
+        """Get memory usage statistics for monitoring."""
+        if not torch.cuda.is_available():
+            return {}
+
+        stats = {}
+        stats["memory_allocated_gb"] = torch.cuda.memory_allocated() / 1e9
+        stats["memory_reserved_gb"] = torch.cuda.memory_reserved() / 1e9
+        stats["max_memory_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
+
+        # Calculate model parameters memory
+        param_memory = sum(p.numel() * p.element_size() for p in self.parameters()) / 1e9
+        stats["parameter_memory_gb"] = param_memory
+
+        return stats
+
+    def count_parameters(self) -> dict[str, int]:
+        """Count model parameters by component."""
+        counts = {}
+
+        # Embedding parameters
+        counts["embeddings"] = sum(p.numel() for p in self.token_embeddings.parameters())
+
+        # Transformer layer parameters
+        if self.layers:
+            layer_params = sum(p.numel() for p in self.layers[0].parameters())
+            counts["transformer_layer"] = layer_params
+            counts["all_transformer_layers"] = layer_params * self.num_layers
+
+        # Final layer norm and projection
+        counts["final_ln"] = sum(p.numel() for p in self.ln_final.parameters())
+        counts["lm_head"] = sum(p.numel() for p in self.lm_head.parameters())
+
+        # Total
+        counts["total"] = sum(p.numel() for p in self.parameters())
+        counts["trainable"] = sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+        return counts
 
     def extra_repr(self) -> str:
         """String representation for debugging."""
