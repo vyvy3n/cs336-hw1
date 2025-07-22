@@ -22,6 +22,7 @@ from modules.scaled_dot_product_attention import scaled_dot_product_attention
 from modules.attention import CausalMultiHeadSelfAttention
 from modules.transformer_block import TransformerBlock
 from modules.transformer_lm import TransformerLM
+from modules.loss import cross_entropy
 
 
 
@@ -568,7 +569,7 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    return cross_entropy(inputs=inputs, targets=targets)
 
 
 def run_gradient_clipping(
