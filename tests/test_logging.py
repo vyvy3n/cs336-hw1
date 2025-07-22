@@ -7,6 +7,7 @@ This module tests the complete experiment tracking capabilities including:
 - Learning curve visualization
 - Integration with training loops
 - Weights & Biases integration (mocked)
+- Hardware monitoring and performance tracking
 - Experiment persistence and loading
 - Error handling and edge cases
 """
@@ -26,6 +27,8 @@ from cs336_basics.experiments.exp_logging import (
     ExperimentConfig,
     ExperimentLogger,
     ExperimentMetadata,
+    HardwareMonitor,
+    HardwareSnapshot,
     MetricPoint,
     TrainingIntegrator,
     compare_experiments,
@@ -57,6 +60,201 @@ class TestMetricPoint:
 
         assert point1 == point2
         assert point1 != point3
+
+
+class TestHardwareSnapshot:
+    """Test the HardwareSnapshot dataclass."""
+
+    def test_hardware_snapshot_creation(self) -> None:
+        """Test basic HardwareSnapshot creation."""
+        snapshot = HardwareSnapshot(step=100, wall_time=1.5)
+        assert snapshot.step == 100
+        assert snapshot.wall_time == 1.5
+        assert snapshot.tokens_per_second is None
+        assert snapshot.samples_per_second is None
+        assert snapshot.memory_efficiency is None
+
+    def test_hardware_snapshot_with_metrics(self) -> None:
+        """Test HardwareSnapshot creation with performance metrics."""
+        snapshot = HardwareSnapshot(
+            step=100,
+            wall_time=1.5,
+            tokens_per_second=1000.0,
+            samples_per_second=50.0,
+            memory_efficiency=0.85,
+        )
+        assert snapshot.tokens_per_second == 1000.0
+        assert snapshot.samples_per_second == 50.0
+        assert snapshot.memory_efficiency == 0.85
+
+    def test_hardware_snapshot_equality(self) -> None:
+        """Test HardwareSnapshot equality comparison."""
+        snapshot1 = HardwareSnapshot(step=100, wall_time=1.5, tokens_per_second=1000.0)
+        snapshot2 = HardwareSnapshot(step=100, wall_time=1.5, tokens_per_second=1000.0)
+        snapshot3 = HardwareSnapshot(step=101, wall_time=1.5, tokens_per_second=1000.0)
+
+        assert snapshot1 == snapshot2
+        assert snapshot1 != snapshot3
+
+
+class TestHardwareMonitor:
+    """Test the HardwareMonitor class."""
+
+    def test_hardware_monitor_creation(self) -> None:
+        """Test HardwareMonitor initialization."""
+        monitor = HardwareMonitor(enable_gpu_monitoring=True, monitor_interval=10.0)
+        assert monitor.enable_gpu_monitoring is True
+        assert monitor.monitor_interval == 10.0
+        assert len(monitor.hardware_snapshots) == 0
+        assert monitor._last_tokens_processed == 0
+        assert monitor._last_samples_processed == 0
+
+    def test_hardware_monitor_context_manager(self) -> None:
+        """Test HardwareMonitor as context manager."""
+        with HardwareMonitor() as monitor:
+            assert monitor is not None
+            assert isinstance(monitor, HardwareMonitor)
+
+    def test_capture_snapshot_basic(self) -> None:
+        """Test basic snapshot capture."""
+        monitor = HardwareMonitor()
+
+        snapshot = monitor.capture_snapshot(step=0, tokens_processed=1000, samples_processed=32)
+
+        assert snapshot.step == 0
+        assert snapshot.wall_time >= 0
+        assert len(monitor.hardware_snapshots) == 1
+
+        # First snapshot should have None for throughput metrics
+        assert snapshot.tokens_per_second is None
+        assert snapshot.samples_per_second is None
+
+    def test_capture_snapshot_throughput_calculation(self) -> None:
+        """Test throughput calculation in snapshots."""
+        monitor = HardwareMonitor()
+
+        # First snapshot
+        snapshot1 = monitor.capture_snapshot(step=0, tokens_processed=1000, samples_processed=32)
+        time.sleep(0.1)  # Small delay to ensure time difference
+
+        # Second snapshot - should calculate throughput
+        snapshot2 = monitor.capture_snapshot(step=1, tokens_processed=2000, samples_processed=64)
+
+        assert snapshot1.tokens_per_second is None
+        assert snapshot1.samples_per_second is None
+
+        # Second snapshot should have throughput metrics
+        assert snapshot2.tokens_per_second is not None
+        assert snapshot2.samples_per_second is not None
+        assert snapshot2.tokens_per_second > 0
+        assert snapshot2.samples_per_second > 0
+
+    @patch("builtins.__import__")
+    def test_capture_snapshot_memory_efficiency(self, mock_import) -> None:
+        """Test memory efficiency calculation."""
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.memory_allocated.return_value = 850 * 1024 * 1024  # 850MB
+        mock_torch.cuda.memory_reserved.return_value = 1000 * 1024 * 1024  # 1000MB
+
+        def import_side_effect(name, *args, **kwargs):
+            if name == "torch":
+                return mock_torch
+            return __import__(name, *args, **kwargs)
+
+        mock_import.side_effect = import_side_effect
+
+        monitor = HardwareMonitor(enable_gpu_monitoring=True)
+        snapshot = monitor.capture_snapshot(step=0)
+
+        assert snapshot.memory_efficiency is not None
+        assert abs(snapshot.memory_efficiency - 0.85) < 0.001  # 850/1000 = 0.85
+
+    @patch("builtins.__import__")
+    def test_capture_snapshot_no_gpu(self, mock_import) -> None:
+        """Test snapshot capture when GPU is not available."""
+        # Create a mock torch module
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+
+        def import_side_effect(name, *args, **kwargs):
+            if name == "torch":
+                return mock_torch
+            return __import__(name, *args, **kwargs)
+
+        mock_import.side_effect = import_side_effect
+
+        monitor = HardwareMonitor(enable_gpu_monitoring=True)
+        snapshot = monitor.capture_snapshot(step=0)
+
+        assert snapshot.memory_efficiency is None
+
+    def test_capture_snapshot_gpu_disabled(self) -> None:
+        """Test snapshot capture when GPU monitoring is disabled."""
+        monitor = HardwareMonitor(enable_gpu_monitoring=False)
+        snapshot = monitor.capture_snapshot(step=0)
+
+        assert snapshot.memory_efficiency is None
+
+    def test_get_latest_snapshot(self) -> None:
+        """Test getting the latest snapshot."""
+        monitor = HardwareMonitor()
+
+        # No snapshots initially
+        assert monitor.get_latest_snapshot() is None
+
+        # Add snapshots
+        snapshot1 = monitor.capture_snapshot(step=0)
+        assert monitor.get_latest_snapshot() == snapshot1
+
+        snapshot2 = monitor.capture_snapshot(step=1)
+        assert monitor.get_latest_snapshot() == snapshot2
+
+    def test_get_average_metrics_empty(self) -> None:
+        """Test getting average metrics when no snapshots exist."""
+        monitor = HardwareMonitor()
+        averages = monitor.get_average_metrics()
+        assert averages == {}
+
+    def test_get_average_metrics_with_data(self) -> None:
+        """Test getting average metrics with snapshot data."""
+        monitor = HardwareMonitor()
+
+        # Create snapshots with known values
+        snapshot1 = HardwareSnapshot(
+            step=0, wall_time=1.0, tokens_per_second=1000.0, samples_per_second=50.0, memory_efficiency=0.8
+        )
+        snapshot2 = HardwareSnapshot(
+            step=1, wall_time=2.0, tokens_per_second=1200.0, samples_per_second=60.0, memory_efficiency=0.9
+        )
+
+        monitor.hardware_snapshots = [snapshot1, snapshot2]
+
+        averages = monitor.get_average_metrics()
+
+        assert abs(averages["avg_tokens_per_second"] - 1100.0) < 0.001  # (1000+1200)/2
+        assert abs(averages["avg_samples_per_second"] - 55.0) < 0.001  # (50+60)/2
+        assert abs(averages["avg_memory_efficiency"] - 0.85) < 0.001  # (0.8+0.9)/2
+
+    def test_get_average_metrics_partial_data(self) -> None:
+        """Test getting average metrics with partial data."""
+        monitor = HardwareMonitor()
+
+        # Create snapshots with some None values
+        snapshot1 = HardwareSnapshot(
+            step=0, wall_time=1.0, tokens_per_second=1000.0, samples_per_second=None, memory_efficiency=0.8
+        )
+        snapshot2 = HardwareSnapshot(
+            step=1, wall_time=2.0, tokens_per_second=None, samples_per_second=60.0, memory_efficiency=None
+        )
+
+        monitor.hardware_snapshots = [snapshot1, snapshot2]
+
+        averages = monitor.get_average_metrics()
+
+        assert abs(averages["avg_tokens_per_second"] - 1000.0) < 0.001  # Only one valid value
+        assert abs(averages["avg_samples_per_second"] - 60.0) < 0.001  # Only one valid value
+        assert abs(averages["avg_memory_efficiency"] - 0.8) < 0.001  # Only one valid value
 
 
 class TestExperimentConfig:
@@ -417,6 +615,191 @@ class TestExperimentLogger:
             with pytest.raises(FileNotFoundError):
                 ExperimentLogger.load("nonexistent_exp", tmp_dir)
 
+    def test_hardware_monitoring_enabled(self) -> None:
+        """Test that hardware monitoring is enabled by default."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=True,
+            )
+
+            assert logger.enable_hardware_monitoring is True
+            assert logger.hardware_monitor is not None
+            assert isinstance(logger.hardware_monitor, HardwareMonitor)
+
+    def test_hardware_monitoring_disabled(self) -> None:
+        """Test that hardware monitoring can be disabled."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=False,
+            )
+
+            assert logger.enable_hardware_monitoring is False
+            assert logger.hardware_monitor is None
+
+    def test_log_hardware_metrics_disabled(self) -> None:
+        """Test logging hardware metrics when monitoring is disabled."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=False,
+            )
+
+            # Should not raise an error
+            logger.log_hardware_metrics(step=1, tokens_processed=1000, samples_processed=32)
+
+            # Should not have created any snapshots
+            summary = logger.get_hardware_utilization_summary()
+            assert summary["hardware_monitoring_enabled"] is False
+
+    def test_log_hardware_metrics_enabled(self) -> None:
+        """Test logging hardware metrics when monitoring is enabled."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=True,
+            )
+
+            logger.log_hardware_metrics(step=1, tokens_processed=1000, samples_processed=32)
+
+            assert logger.hardware_monitor is not None
+            assert len(logger.hardware_monitor.hardware_snapshots) == 1
+
+            snapshot = logger.hardware_monitor.hardware_snapshots[0]
+            assert snapshot.step == 1
+
+    @patch("cs336_basics.experiments.exp_logging.wandb")
+    def test_log_hardware_metrics_with_wandb(self, mock_wandb) -> None:
+        """Test logging hardware metrics to W&B."""
+        mock_run = MagicMock()
+        mock_wandb.init.return_value = mock_run
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=True,
+                enable_hardware_monitoring=True,
+            )
+
+            # Mock throughput calculation by adding a previous snapshot
+            logger.hardware_monitor._last_tokens_processed = 500
+            logger.hardware_monitor._last_samples_processed = 16
+            logger.hardware_monitor._last_snapshot_time = time.time() - 1.0
+
+            logger.log_hardware_metrics(step=1, tokens_processed=1000, samples_processed=32)
+
+            # Check that wandb.log was called
+            mock_run.log.assert_called()
+            call_args = mock_run.log.call_args[0][0]  # Get the logged dictionary
+
+            # Should include performance metrics
+            assert "tokens_per_second" in call_args or "samples_per_second" in call_args
+
+    def test_get_hardware_utilization_summary_disabled(self) -> None:
+        """Test hardware utilization summary when monitoring is disabled."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=False,
+            )
+
+            summary = logger.get_hardware_utilization_summary()
+            assert summary["hardware_monitoring_enabled"] is False
+            assert "average_metrics" not in summary
+
+    def test_get_hardware_utilization_summary_enabled(self) -> None:
+        """Test hardware utilization summary when monitoring is enabled."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=True,
+            )
+
+            # Add some hardware data
+            logger.log_hardware_metrics(step=1, tokens_processed=1000, samples_processed=32)
+            time.sleep(0.1)
+            logger.log_hardware_metrics(step=2, tokens_processed=2000, samples_processed=64)
+
+            summary = logger.get_hardware_utilization_summary()
+            assert summary["hardware_monitoring_enabled"] is True
+            assert summary["total_snapshots"] == 2
+            assert "average_metrics" in summary
+            assert "latest_metrics" in summary
+            assert "wandb_system_metrics" in summary
+
+    def test_save_and_load_with_hardware_monitoring(self) -> None:
+        """Test saving and loading experiment with hardware monitoring data."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create logger with hardware monitoring
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                experiment_id="test_exp_hw_001",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=True,
+            )
+
+            # Add hardware metrics
+            logger.log_hardware_metrics(step=1, tokens_processed=1000, samples_processed=32)
+            logger.log_hardware_metrics(step=2, tokens_processed=2000, samples_processed=64)
+
+            # Save
+            logger.save()
+
+            # Load
+            loaded_logger = ExperimentLogger.load("test_exp_hw_001", tmp_dir)
+
+            # Verify hardware monitoring data was loaded
+            assert loaded_logger.enable_hardware_monitoring is True
+            assert loaded_logger.hardware_monitor is not None
+            assert len(loaded_logger.hardware_monitor.hardware_snapshots) == 2
+
+            summary = loaded_logger.get_hardware_utilization_summary()
+            assert summary["hardware_monitoring_enabled"] is True
+            assert summary["total_snapshots"] == 2
+
+    def test_generate_summary_report_with_hardware(self) -> None:
+        """Test generation of summary report with hardware metrics."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                description="Test experiment with hardware monitoring",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=True,
+            )
+
+            # Add some metrics and hardware data - need multiple snapshots to calculate averages
+            logger.log_metric("train_loss", 0.5, step=1)
+            logger.log_hardware_metrics(step=1, tokens_processed=1000, samples_processed=32)
+            time.sleep(0.1)  # Small delay to ensure time difference
+            logger.log_hardware_metrics(step=2, tokens_processed=2000, samples_processed=64)
+
+            report = logger.generate_summary_report()
+
+            assert "Hardware Utilization Summary:" in report
+            # Check for either the average metrics section or just the latest metrics
+            has_metrics = (
+                "Average Performance Metrics:" in report
+                or "Latest Metrics" in report
+                or "automatically logged by W&B" in report
+            )
+            assert has_metrics, f"Expected hardware metrics in report, got: {report}"
+
     def test_generate_summary_report(self) -> None:
         """Test generation of summary report."""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -637,6 +1020,111 @@ class TestTrainingIntegrator:
             assert logger.get_latest_metric("val_loss") == 0.6
             assert logger.get_latest_metric("accuracy") == 0.85
             assert logger.get_latest_metric("val_perplexity") is None
+
+    def test_training_integrator_creation_with_hardware_monitoring(self) -> None:
+        """Test TrainingIntegrator creation with hardware monitoring."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=True,
+            )
+            integrator = TrainingIntegrator(logger, hardware_log_interval=10)
+
+            assert integrator.logger == logger
+            assert integrator.hardware_log_interval == 10
+            assert integrator.total_tokens_processed == 0
+            assert integrator.total_samples_processed == 0
+
+    def test_log_training_step_with_throughput_tracking(self) -> None:
+        """Test logging training step with throughput tracking."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=True,
+            )
+            integrator = TrainingIntegrator(logger, hardware_log_interval=2)
+
+            # First step
+            integrator.log_training_step(
+                step=1,
+                train_loss=0.5,
+                learning_rate=1e-4,
+                tokens_processed=1000,
+                samples_processed=32,
+            )
+
+            assert integrator.total_tokens_processed == 1000
+            assert integrator.total_samples_processed == 32
+
+            # Second step - should trigger hardware logging (interval=2)
+            integrator.log_training_step(
+                step=2,
+                train_loss=0.4,
+                learning_rate=1e-4,
+                tokens_processed=1000,
+                samples_processed=32,
+            )
+
+            assert integrator.total_tokens_processed == 2000
+            assert integrator.total_samples_processed == 64
+
+            # Check that hardware metrics were logged
+            assert logger.hardware_monitor is not None
+            assert len(logger.hardware_monitor.hardware_snapshots) >= 1
+
+    def test_log_training_step_hardware_interval(self) -> None:
+        """Test that hardware metrics are logged at correct intervals."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=True,
+            )
+            integrator = TrainingIntegrator(logger, hardware_log_interval=3)
+
+            # Steps 1 and 2 should not trigger hardware logging
+            integrator.log_training_step(
+                step=1, train_loss=0.5, learning_rate=1e-4, tokens_processed=1000, samples_processed=32
+            )
+            integrator.log_training_step(
+                step=2, train_loss=0.4, learning_rate=1e-4, tokens_processed=1000, samples_processed=32
+            )
+
+            assert len(logger.hardware_monitor.hardware_snapshots) == 0
+
+            # Step 3 should trigger hardware logging (interval=3)
+            integrator.log_training_step(
+                step=3, train_loss=0.3, learning_rate=1e-4, tokens_processed=1000, samples_processed=32
+            )
+
+            assert len(logger.hardware_monitor.hardware_snapshots) == 1
+
+    def test_log_training_step_without_throughput(self) -> None:
+        """Test logging training step without throughput tracking."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ExperimentLogger(
+                experiment_name="test_experiment",
+                log_dir=tmp_dir,
+                use_wandb=False,
+                enable_hardware_monitoring=True,
+            )
+            integrator = TrainingIntegrator(logger, hardware_log_interval=1)
+
+            # Should work without tokens_processed/samples_processed
+            integrator.log_training_step(step=1, train_loss=0.5, learning_rate=1e-4)
+
+            assert integrator.total_tokens_processed == 0
+            assert integrator.total_samples_processed == 0
+
+            # Hardware metrics should still be logged but without throughput data
+            assert len(logger.hardware_monitor.hardware_snapshots) == 1
+            snapshot = logger.hardware_monitor.hardware_snapshots[0]
+            assert snapshot.step == 1
 
     def test_start_epoch(self) -> None:
         """Test logging epoch start."""
