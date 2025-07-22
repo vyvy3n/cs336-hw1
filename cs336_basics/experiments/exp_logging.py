@@ -7,8 +7,6 @@ from __future__ import annotations
 import json
 import os
 import time
-import warnings
-from typing import Any, Dict, Optional
 
 import pynvml
 import torch
@@ -30,32 +28,28 @@ class MemoryMonitor:
             self.baseline_memory = torch.cuda.memory_allocated()
             self.peak_memory = self.baseline_memory
 
-    def get_stats(self) -> Dict[str, float]:
+    def get_stats(self) -> dict[str, float]:
         """Get comprehensive memory statistics."""
         if not torch.cuda.is_available():
             return {}
 
         stats = {}
 
-        # Current memory usage
         current_allocated = torch.cuda.memory_allocated()
         current_reserved = torch.cuda.memory_reserved()
         max_allocated = torch.cuda.max_memory_allocated()
         max_reserved = torch.cuda.max_memory_reserved()
 
-        # Memory in GB
         stats["memory_allocated_gb"] = current_allocated / 1e9
         stats["memory_reserved_gb"] = current_reserved / 1e9
         stats["max_memory_allocated_gb"] = max_allocated / 1e9
         stats["max_memory_reserved_gb"] = max_reserved / 1e9
 
-        # Memory efficiency metrics
         total_memory = torch.cuda.get_device_properties(0).total_memory
         stats["total_memory_gb"] = total_memory / 1e9
         stats["memory_utilization"] = current_allocated / total_memory
         stats["peak_memory_utilization"] = max_allocated / total_memory
 
-        # Memory efficiency (active / allocated)
         if current_reserved > 0:
             stats["memory_efficiency"] = current_allocated / current_reserved
         else:
@@ -80,13 +74,12 @@ class PerformanceMonitor:
         self.throughput_history.append(tokens_per_sec)
         self.loss_history.append(loss)
 
-        # Keep only recent history (last 100 steps)
         if len(self.step_times) > 100:
             self.step_times = self.step_times[-100:]
             self.throughput_history = self.throughput_history[-100:]
             self.loss_history = self.loss_history[-100:]
 
-    def get_stats(self) -> Dict[str, float]:
+    def get_stats(self) -> dict[str, float]:
         """Get comprehensive performance statistics."""
         stats = {}
 
@@ -100,16 +93,14 @@ class PerformanceMonitor:
             stats["max_tokens_per_sec"] = max(self.throughput_history)
 
         if self.loss_history:
-            recent_losses = self.loss_history[-10:]  # Last 10 steps
+            recent_losses = self.loss_history[-10:]
             if len(recent_losses) > 1:
                 loss_trend = recent_losses[-1] - recent_losses[0]
                 stats["loss_trend"] = loss_trend
 
-        # Add memory stats
         memory_stats = self.memory_monitor.get_stats()
         stats.update(memory_stats)
 
-        # Runtime stats
         stats["total_runtime_hours"] = (time.time() - self.start_time) / 3600
 
         return stats
@@ -134,12 +125,10 @@ class ExperimentLogger:
         self.log_dir = log_dir
         self.use_wandb = use_wandb
 
-        # Create log directory
         os.makedirs(log_dir, exist_ok=True)
         self.experiment_dir = os.path.join(log_dir, experiment_name)
         os.makedirs(self.experiment_dir, exist_ok=True)
 
-        # Initialize W&B if requested
         if use_wandb:
             wandb.init(
                 project=wandb_project or "ml-experiments",
@@ -152,10 +141,8 @@ class ExperimentLogger:
         else:
             self.wandb = None
 
-        # Initialize performance monitoring
         self.performance_monitor = PerformanceMonitor()
 
-        # Experiment metadata
         self.metadata = {
             "name": experiment_name,
             "description": description,
@@ -164,7 +151,6 @@ class ExperimentLogger:
             "notes": [],
         }
 
-        # Log initial system info
         self._log_system_info()
 
     def _log_system_info(self):
@@ -197,18 +183,15 @@ class ExperimentLogger:
 
     def log_metrics(self, step: int, **metrics):
         """Log training metrics."""
-        # Add performance stats
         perf_stats = self.performance_monitor.get_stats()
         metrics.update(perf_stats)
 
-        # Log to local file
         log_entry = {"step": step, "timestamp": time.time(), **metrics}
         log_file = os.path.join(self.experiment_dir, "metrics.jsonl")
 
         with open(log_file, "a") as f:
             f.write(json.dumps(log_entry) + "\n")
 
-        # Log to W&B
         if self.wandb:
             self.wandb.log(metrics, step=step)
 
@@ -227,7 +210,6 @@ class ExperimentLogger:
         self.metadata["end_time"] = time.time()
         self.metadata["duration_hours"] = (self.metadata["end_time"] - self.metadata["start_time"]) / 3600
 
-        # Add final performance summary
         final_stats = self.performance_monitor.get_stats()
         self.metadata["final_performance"] = final_stats
 
@@ -257,12 +239,10 @@ class TrainingIntegrator:
         self.hardware_log_interval = hardware_log_interval
         self.step_count = 0
 
-        # Training state tracking
         self.current_epoch = 0
         self.total_tokens_processed = 0
         self.total_samples_processed = 0
 
-        # Performance tracking
         self.best_val_loss = float("inf")
         self.steps_since_improvement = 0
 
@@ -287,13 +267,11 @@ class TrainingIntegrator:
         self.total_tokens_processed += tokens_processed
         self.total_samples_processed += samples_processed
 
-        # Update performance monitor
         batch_size = samples_processed
         sequence_length = tokens_processed // batch_size if batch_size > 0 else 0
 
         self.logger.performance_monitor.log_step(step_time, tokens_per_sec, train_loss, batch_size, sequence_length)
 
-        # Prepare metrics
         metrics = {
             "train_loss": train_loss,
             "learning_rate": learning_rate,
@@ -305,10 +283,8 @@ class TrainingIntegrator:
             **additional_metrics,
         }
 
-        # Log metrics
         self.logger.log_metrics(step, **metrics)
 
-        # Periodic hardware logging
         if step % self.hardware_log_interval == 0:
             self._log_hardware_stats(step)
 
@@ -316,7 +292,6 @@ class TrainingIntegrator:
         """Log validation metrics."""
         metrics = {"val_loss": val_loss, "val_perplexity": perplexity, **additional_metrics}
 
-        # Track best validation loss
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
             self.steps_since_improvement = 0
@@ -333,14 +308,12 @@ class TrainingIntegrator:
         if not torch.cuda.is_available():
             return
 
-        # GPU utilization (if nvidia-ml-py is available)
         pynvml.nvmlInit()
         handle = pynvml.nvmlDeviceGetHandleByIndex(0)
 
-        # GPU utilization
         utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
         temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-        power = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000  # Convert to watts
+        power = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000
 
         hw_metrics = {
             "gpu_utilization_percent": utilization.gpu,

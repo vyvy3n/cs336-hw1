@@ -5,7 +5,6 @@ Attention mechanisms and positional embeddings with FlashAttention-2 optimizatio
 from __future__ import annotations
 
 import math
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -40,16 +39,11 @@ def scaled_dot_product_attention(
         Output tensor with shape (..., n_queries, d_v)
     """
     if use_flash_attention and hasattr(F, "scaled_dot_product_attention"):
-        # Use PyTorch's optimized implementation (FlashAttention-2 backend)
-        # For causal attention, PyTorch handles masking automatically
         if mask is None:
-            # Use built-in causal masking for better performance
             return F.scaled_dot_product_attention(Q, K, V, attn_mask=None, dropout_p=0.0, is_causal=True)
         else:
-            # When explicit mask is provided, don't use is_causal
             return F.scaled_dot_product_attention(Q, K, V, attn_mask=mask, dropout_p=0.0, is_causal=False)
     else:
-        # Fallback to manual implementation
         d_k = Q.shape[-1]
         scores = torch.einsum("...qd,...kd->...qk", Q, K) / math.sqrt(d_k)
 
@@ -86,13 +80,11 @@ class RotaryPositionalEmbedding(nn.Module):
 
         assert d_k % 2 == 0, f"d_k must be even, got {d_k}"
 
-        # Precompute rotation matrices for efficiency
         dim_indices = torch.arange(0, d_k // 2, dtype=torch.float32)
         frequencies = 1.0 / (theta ** (2.0 * dim_indices / d_k))
         positions = torch.arange(max_seq_len, dtype=torch.float32)
         angles = torch.outer(positions, frequencies)
 
-        # Precompute cos and sin values with memory layout optimization
         cos_values = torch.cos(angles).contiguous()
         sin_values = torch.sin(angles).contiguous()
 
@@ -117,14 +109,12 @@ class RotaryPositionalEmbedding(nn.Module):
         cos_vals = self.cos_values[token_positions]
         sin_vals = self.sin_values[token_positions]
 
-        # Optimized rotation using tensor operations
         x_even = x[..., 0::2]
         x_odd = x[..., 1::2]
 
         x_new_even = cos_vals * x_even - sin_vals * x_odd
         x_new_odd = sin_vals * x_even + cos_vals * x_odd
 
-        # Use torch.stack for better memory efficiency
         result = torch.stack([x_new_even, x_new_odd], dim=-1)
         return result.flatten(-2)
 
@@ -162,16 +152,14 @@ class MultiHeadSelfAttention(nn.Module):
 
         self.d_model = d_model
         self.num_heads = num_heads
-        self.d_k = d_model // num_heads  # Dimension per head
+        self.d_k = d_model // num_heads
         self.d_v = d_model // num_heads
 
         factory_kwargs = {"device": device, "dtype": dtype}
 
-        # Use fused QKV projection for better efficiency
         self.qkv_proj = Linear(d_model, 3 * d_model, **factory_kwargs)
         self.output_proj = Linear(d_model, d_model, **factory_kwargs)
 
-        # Enable gradient checkpointing capability
         self.use_checkpoint = False
 
     def forward(
@@ -205,23 +193,19 @@ class MultiHeadSelfAttention(nn.Module):
         """Internal forward implementation."""
         *batch_dims, seq_len, d_model = x.shape
 
-        # Fused QKV projection for better memory bandwidth utilization
         qkv = self.qkv_proj(x)
         qkv = qkv.view(*batch_dims, seq_len, 3, self.num_heads, self.d_k)
-        qkv = qkv.permute(*range(len(batch_dims)), -3, -2, -4, -1)  # (batch..., 3, num_heads, seq_len, d_k)
+        qkv = qkv.permute(*range(len(batch_dims)), -3, -2, -4, -1)
 
-        Q, K, V = qkv.unbind(dim=len(batch_dims))  # Each: (batch..., num_heads, seq_len, d_k)
+        Q, K, V = qkv.unbind(dim=len(batch_dims))
 
-        # Apply RoPE if provided
         if rope is not None and token_positions is not None:
-            # Flatten for RoPE application
             original_q_shape = Q.shape
             original_k_shape = K.shape
 
             Q_flat = Q.reshape(-1, seq_len, self.d_k)
             K_flat = K.reshape(-1, seq_len, self.d_k)
 
-            # Expand positions for all heads
             pos_expanded = token_positions.unsqueeze(-2)
             pos_expanded = pos_expanded.expand(*batch_dims, self.num_heads, seq_len)
             pos_flat = pos_expanded.reshape(-1, seq_len)
@@ -232,11 +216,9 @@ class MultiHeadSelfAttention(nn.Module):
             Q = Q_flat.reshape(original_q_shape)
             K = K_flat.reshape(original_k_shape)
 
-        # Use optimized attention computation
         attn_output = scaled_dot_product_attention(Q, K, V, mask=None, use_flash_attention=True)
 
-        # Reshape and project output
-        attn_output = attn_output.transpose(-3, -2)  # (batch..., seq_len, num_heads, d_k)
+        attn_output = attn_output.transpose(-3, -2)
         attn_output = attn_output.contiguous().view(*batch_dims, seq_len, self.d_model)
 
         output = self.output_proj(attn_output)

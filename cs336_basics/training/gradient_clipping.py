@@ -24,7 +24,6 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
     """
     eps = 1e-6
 
-    # Calculate the global L2 norm of all gradients
     total_norm = 0.0
     for param in parameters:
         if param.grad is not None:
@@ -32,7 +31,6 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
             total_norm += param_norm.item() ** 2
     total_norm = math.sqrt(total_norm)
 
-    # Clip gradients if necessary
     if total_norm > max_l2_norm:
         clip_coeff = max_l2_norm / (total_norm + eps)
         for param in parameters:

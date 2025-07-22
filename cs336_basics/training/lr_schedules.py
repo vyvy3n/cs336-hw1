@@ -30,14 +30,11 @@ def cosine_learning_rate_schedule(
         learning rate for the current iteration
     """
     if iteration < warmup_iters:
-        # Linear warmup phase
         return max_learning_rate * iteration / warmup_iters
     elif iteration <= cosine_cycle_iters:
-        # Cosine annealing phase
         progress = (iteration - warmup_iters) / (cosine_cycle_iters - warmup_iters)
         return min_learning_rate + (max_learning_rate - min_learning_rate) * 0.5 * (1 + math.cos(math.pi * progress))
     else:
-        # Post-annealing phase: constant at minimum
         return min_learning_rate
 
 
@@ -69,15 +66,12 @@ def improved_cosine_schedule(
         learning rate for the current iteration
     """
     if iteration < warmup_iters:
-        # Improved warmup: smoother transition using cosine
         warmup_factor = 0.5 * (1 + math.cos(math.pi * (1 - iteration / warmup_iters)))
         return max_learning_rate * (1 - warmup_factor)
     else:
-        # Cosine annealing with optional restarts
         progress = (iteration - warmup_iters) / (total_iters - warmup_iters)
 
         if restart_factor > 0.0:
-            # Cosine restarts
             restart_period = int((total_iters - warmup_iters) * restart_factor)
             if restart_period > 0:
                 progress = progress % (restart_period / (total_iters - warmup_iters))
@@ -173,15 +167,13 @@ def one_cycle_schedule(
     step_down = total_steps - step_up
 
     if iteration <= step_up:
-        # Increasing phase
         return initial_lr + (max_lr - initial_lr) * iteration / step_up
     else:
-        # Decreasing phase
         progress = (iteration - step_up) / step_down
 
         if anneal_strategy == "cos":
             factor = 0.5 * (1 + math.cos(math.pi * progress))
-        else:  # linear
+        else:
             factor = 1 - progress
 
         return final_lr + (max_lr - final_lr) * factor
@@ -235,7 +227,7 @@ def get_scheduler(
         scheduler function that takes iteration and returns learning rate
     """
     if min_lr is None:
-        min_lr = max_lr * 0.1  # Default to 10% of max_lr
+        min_lr = max_lr * 0.1
 
     if scheduler_type == "cosine":
 

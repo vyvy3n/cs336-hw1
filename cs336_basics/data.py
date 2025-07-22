@@ -39,27 +39,20 @@ def get_batch(
     """
     data_size = len(dataset)
 
-    # Ensure we have enough data
     if data_size < context_length + 1:
         raise ValueError(f"Dataset too small: {data_size} < {context_length + 1}")
 
-    # Sample random starting positions
-    # Use vectorized random sampling for better performance
     max_start_idx = data_size - context_length
     start_indices = np.random.randint(0, max_start_idx, size=batch_size)
 
-    # Pre-allocate arrays for better memory efficiency
     input_batch = np.empty((batch_size, context_length), dtype=np.int64)
     target_batch = np.empty((batch_size, context_length), dtype=np.int64)
 
-    # Vectorized data extraction
     for i, start_idx in enumerate(start_indices):
         input_batch[i] = dataset[start_idx : start_idx + context_length]
         target_batch[i] = dataset[start_idx + 1 : start_idx + context_length + 1]
 
-    # Convert to tensors with optimized settings
     if pin_memory and device == "cuda":
-        # Use pinned memory for faster GPU transfer
         inputs = torch.from_numpy(input_batch).pin_memory().to(device=device, dtype=dtype, non_blocking=True)
         targets = torch.from_numpy(target_batch).pin_memory().to(device=device, dtype=dtype, non_blocking=True)
     else:
@@ -102,7 +95,6 @@ class BatchSampler:
         if self.max_start_idx <= 0:
             raise ValueError(f"Dataset too small for context length {context_length}")
 
-        # Pre-allocate memory pools
         self._init_memory_pools()
 
     def _init_memory_pools(self):
@@ -113,7 +105,6 @@ class BatchSampler:
         self.target_pool = np.empty((pool_size, self.context_length), dtype=np.int64)
 
         if self.device == "cuda" and torch.cuda.is_available():
-            # Pre-allocate GPU tensors
             self.gpu_input_buffer = torch.empty(
                 (self.batch_size, self.context_length), dtype=torch.long, device=self.device
             )
@@ -123,17 +114,13 @@ class BatchSampler:
 
     def sample_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """Sample a batch with optimized memory access."""
-        # Generate random indices
         start_indices = np.random.randint(0, self.max_start_idx, size=self.batch_size)
 
-        # Extract sequences using pre-allocated arrays
         for i, start_idx in enumerate(start_indices):
             self.input_pool[i] = self.dataset[start_idx : start_idx + self.context_length]
             self.target_pool[i] = self.dataset[start_idx + 1 : start_idx + self.context_length + 1]
 
-        # Convert to tensors with memory optimization
         if hasattr(self, "gpu_input_buffer"):
-            # Use pre-allocated GPU buffers
             self.gpu_input_buffer.copy_(torch.from_numpy(self.input_pool[: self.batch_size]))
             self.gpu_target_buffer.copy_(torch.from_numpy(self.target_pool[: self.batch_size]))
             return self.gpu_input_buffer.clone(), self.gpu_target_buffer.clone()

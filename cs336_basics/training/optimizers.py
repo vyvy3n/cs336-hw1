@@ -83,12 +83,9 @@ class AdamW(Optimizer):
 
                 state = self.state[p]
 
-                # State initialization
                 if len(state) == 0:
                     state["step"] = 0
-                    # Exponential moving average of gradient values
                     state["exp_avg"] = torch.zeros_like(p.data)
-                    # Exponential moving average of squared gradient values
                     state["exp_avg_sq"] = torch.zeros_like(p.data)
 
                 exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
@@ -96,7 +93,6 @@ class AdamW(Optimizer):
 
                 state["step"] += 1
 
-                # Decay the first and second moment running average coefficient
                 exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
                 exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
 
@@ -104,13 +100,10 @@ class AdamW(Optimizer):
                 bias_correction1 = 1 - beta1**step
                 bias_correction2 = 1 - beta2**step
 
-                # Compute the step size
                 step_size = group["lr"] * math.sqrt(bias_correction2) / bias_correction1
 
-                # Update parameters
                 p.data.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(group["eps"]), value=-step_size)
 
-                # Apply weight decay
                 p.data.mul_(1 - group["lr"] * group["weight_decay"])
 
         return loss

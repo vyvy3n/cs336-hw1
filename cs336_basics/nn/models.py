@@ -55,7 +55,6 @@ class TransformerBlock(nn.Module):
         self.ffn = SwiGLU(d_model, d_ff, **factory_kwargs)
         self.ln2 = RMSNorm(d_model, eps, **factory_kwargs)
 
-        # Enable gradient checkpointing support
         self.use_checkpoint = False
 
     def forward(
@@ -87,7 +86,6 @@ class TransformerBlock(nn.Module):
         token_positions: Int[torch.Tensor, "... seq_len"] | None = None,
     ) -> Float[torch.Tensor, "... seq_len d_model"]:
         """Internal forward implementation."""
-        # Pre-norm architecture for better training stability
         normalized_x = self.ln1(x)
         attn_output = self.attn(normalized_x, rope=rope, token_positions=token_positions)
         z = x + attn_output
@@ -146,7 +144,6 @@ class TransformerLM(nn.Module):
         assert context_length > 0, f"context_length must be positive, got {context_length}"
         assert num_layers > 0, f"num_layers must be positive, got {num_layers}"
 
-        # Ensure d_ff is optimal for tensor cores (multiple of 64)
         if d_ff % 64 != 0:
             d_ff = ((d_ff + 63) // 64) * 64
 
@@ -175,7 +172,6 @@ class TransformerLM(nn.Module):
         self.ln_final = RMSNorm(d_model, eps, **factory_kwargs)
         self.lm_head = Linear(d_model, vocab_size, **factory_kwargs)
 
-        # Performance optimization settings
         self.use_gradient_checkpointing = False
         self._gradient_checkpointing_layers = None
 
@@ -195,7 +191,6 @@ class TransformerLM(nn.Module):
 
         self._gradient_checkpointing_layers = layers_to_checkpoint
 
-        # Enable checkpointing for specified number of layers (from the beginning)
         for i, layer in enumerate(self.layers):
             if i < layers_to_checkpoint:
                 layer.use_checkpoint = True
@@ -229,18 +224,14 @@ class TransformerLM(nn.Module):
             f"Input sequence length ({seq_len}) exceeds context length ({self.context_length})"
         )
 
-        # Optimize position encoding computation
         token_positions = torch.arange(seq_len, device=input_ids.device, dtype=torch.long)
         token_positions = token_positions.unsqueeze(0).expand(batch_size, -1)
 
-        # Token embeddings with potential memory optimization
         x = self.token_embeddings(input_ids)
 
-        # Apply transformer layers with optional checkpointing
         for layer in self.layers:
             x = layer(x, rope=self.rope, token_positions=token_positions)
 
-        # Final layer norm and projection
         x = self.ln_final(x)
         logits = self.lm_head(x)
 
@@ -256,7 +247,6 @@ class TransformerLM(nn.Module):
         stats["memory_reserved_gb"] = torch.cuda.memory_reserved() / 1e9
         stats["max_memory_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
 
-        # Calculate model parameters memory
         param_memory = sum(p.numel() * p.element_size() for p in self.parameters()) / 1e9
         stats["parameter_memory_gb"] = param_memory
 
@@ -266,20 +256,16 @@ class TransformerLM(nn.Module):
         """Count model parameters by component."""
         counts = {}
 
-        # Embedding parameters
         counts["embeddings"] = sum(p.numel() for p in self.token_embeddings.parameters())
 
-        # Transformer layer parameters
         if self.layers:
             layer_params = sum(p.numel() for p in self.layers[0].parameters())
             counts["transformer_layer"] = layer_params
             counts["all_transformer_layers"] = layer_params * self.num_layers
 
-        # Final layer norm and projection
         counts["final_ln"] = sum(p.numel() for p in self.ln_final.parameters())
         counts["lm_head"] = sum(p.numel() for p in self.lm_head.parameters())
 
-        # Total
         counts["total"] = sum(p.numel() for p in self.parameters())
         counts["trainable"] = sum(p.numel() for p in self.parameters() if p.requires_grad)
 

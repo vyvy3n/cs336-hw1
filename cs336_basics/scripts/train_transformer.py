@@ -27,12 +27,11 @@ import time
 import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import torch
-import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 from cs336_basics.data import get_batch
 from cs336_basics.experiments.exp_logging import ExperimentLogger, TrainingIntegrator
@@ -63,7 +62,7 @@ class TrainingConfig:
     d_model: int = 512
     num_layers: int = 4
     num_heads: int = 16
-    d_ff: int = 1344  # Will be rounded to multiple of 64
+    d_ff: int = 1344
     rope_theta: float = 10000.0
     eps: float = 1e-5
 
@@ -80,9 +79,9 @@ class TrainingConfig:
     grad_clip_norm: float = 1.0
 
     # Optimization settings
-    use_amp: bool = True  # Automatic Mixed Precision
-    use_gradient_checkpointing: bool = True  # Memory efficiency
-    gradient_checkpointing_layers: int | None = None  # None = all layers
+    use_amp: bool = True
+    use_gradient_checkpointing: bool = True
+    gradient_checkpointing_layers: int | None = None
     use_tf32: bool = True
     compile_model: bool = True
     channels_last: bool = False
@@ -91,7 +90,7 @@ class TrainingConfig:
     # Data loading optimizations
     num_workers: int = 4
     pin_memory: bool = True
-    prefetch_factor: int = 2  # Number of batches to prefetch
+    prefetch_factor: int = 2
 
     # Logging and evaluation
     log_interval: int = 50
@@ -123,7 +122,6 @@ class TrainingConfig:
 
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
-        # Optimize d_ff for tensor cores
         if self.d_ff % 64 != 0:
             self.d_ff = ((self.d_ff + 63) // 64) * 64
             warnings.warn(f"Adjusted d_ff to {self.d_ff} for optimal tensor core usage")
@@ -132,7 +130,7 @@ class TrainingConfig:
         self.total_tokens = self.effective_batch_size * self.max_steps * self.context_length
 
 
-class OptimizedDataLoader:
+class DataLoader:
     """
     High-performance data loader with prefetching and memory optimizations.
     """
@@ -166,13 +164,11 @@ class OptimizedDataLoader:
 
         print(f"Loaded dataset with {self.data_size:,} tokens from {data_path}")
 
-        # Pre-allocate tensors for better memory efficiency
         self._preallocate_tensors()
 
     def _preallocate_tensors(self) -> None:
         """Pre-allocate tensors for memory efficiency."""
         if self.device == "cuda" and torch.cuda.is_available():
-            # Pre-allocate GPU tensors
             self._input_buffer = torch.empty(
                 (self.batch_size, self.context_length), dtype=torch.long, device=self.device
             )
@@ -190,7 +186,7 @@ class OptimizedDataLoader:
         )
 
 
-class OptimizedTrainer:
+class Trainer:
     """
     Advanced Trainer with memory optimizations and performance enhancements.
     """
@@ -201,7 +197,6 @@ class OptimizedTrainer:
         self.step = 0
         self.start_time = time.time()
 
-        # Initialize experiment logging
         self.experiment_logger = ExperimentLogger(
             experiment_name=config.experiment_name,
             description=config.experiment_description,
@@ -217,18 +212,15 @@ class OptimizedTrainer:
             hardware_log_interval=self.config.log_interval,
         )
 
-        # Setup components
         self._setup_device()
         self._setup_model()
         self._setup_optimizer()
         self._setup_amp()
         self._setup_data_loaders()
 
-        # Try to resume if requested
         if config.resume_from or config.auto_resume:
             self._try_resume()
 
-        # Log model information
         param_counts = self.model.count_parameters()
         memory_stats = self.model.get_memory_stats()
 
@@ -257,7 +249,6 @@ class OptimizedTrainer:
                 torch.backends.cudnn.allow_tf32 = True
                 print("Enabled TF32 for maximum H100 throughput")
 
-            # Enable optimized attention backends
             if hasattr(torch.backends.cuda, "enable_flash_sdp"):
                 torch.backends.cuda.enable_flash_sdp(True)
                 print("Enabled FlashAttention backend")
@@ -280,15 +271,12 @@ class OptimizedTrainer:
             device=self.device,
         )
 
-        # Enable gradient checkpointing for memory efficiency
         if self.config.use_gradient_checkpointing:
             self.model.enable_gradient_checkpointing(self.config.gradient_checkpointing_layers)
             print(f"Enabled gradient checkpointing for {self.config.gradient_checkpointing_layers or 'all'} layers")
 
-        # Store original model reference for checkpointing
         self.original_model = self.model
 
-        # Compile model for better performance
         if self.config.compile_model and self.device.type == "cuda":
             try:
                 self.model = torch.compile(self.model, mode="max-autotune")
@@ -305,7 +293,6 @@ class OptimizedTrainer:
             "eps": self.config.eps,
         }
 
-        # Use fused AdamW for better performance
         if self.config.use_fused_adamw and self.device.type == "cuda":
             try:
                 self.optimizer = torch.optim.AdamW(self.original_model.parameters(), fused=True, **optimizer_kwargs)
@@ -326,7 +313,7 @@ class OptimizedTrainer:
 
     def _setup_data_loaders(self) -> None:
         """Setup optimized data loaders."""
-        self.train_loader = OptimizedDataLoader(
+        self.train_loader = DataLoader(
             data_path=self.config.train_data_path,
             batch_size=self.config.batch_size,
             context_length=self.config.context_length,
@@ -337,7 +324,7 @@ class OptimizedTrainer:
 
         self.val_loader = None
         if self.config.val_data_path and Path(self.config.val_data_path).exists():
-            self.val_loader = OptimizedDataLoader(
+            self.val_loader = DataLoader(
                 data_path=self.config.val_data_path,
                 batch_size=self.config.batch_size,
                 context_length=self.config.context_length,
@@ -381,27 +368,21 @@ class OptimizedTrainer:
         self.model.train()
         total_loss = 0.0
 
-        # Update learning rate
         current_lr = self.get_lr(self.step)
         for param_group in self.optimizer.param_groups:
             param_group["lr"] = current_lr
 
-        # Zero gradients at the start of accumulation
         self.optimizer.zero_grad()
 
-        for micro_step in range(self.config.gradient_accumulation_steps):
-            # Get batch
+        for _ in range(self.config.gradient_accumulation_steps):
             inputs, targets = self.train_loader.get_batch()
 
-            # Mixed precision forward pass
             if self.scaler is not None:
                 with autocast():
                     logits = self.model(inputs)
                     loss = cross_entropy(logits, targets)
-                    # Scale loss for gradient accumulation
                     loss = loss / self.config.gradient_accumulation_steps
 
-                # Backward pass with scaling
                 self.scaler.scale(loss).backward()
             else:
                 logits = self.model(inputs)
@@ -411,13 +392,10 @@ class OptimizedTrainer:
 
             total_loss += loss.item()
 
-        # Gradient clipping and optimization step
         if self.scaler is not None:
-            # Unscale gradients for clipping
             self.scaler.unscale_(self.optimizer)
             gradient_clipping(self.original_model.parameters(), self.config.grad_clip_norm)
 
-            # Optimizer step with scaling
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
@@ -483,16 +461,13 @@ class OptimizedTrainer:
         while self.step < self.config.max_steps:
             step_start_time = time.time()
 
-            # Training step
             metrics = self.train_step()
 
-            # Calculate performance metrics
             step_time = time.time() - step_start_time
             elapsed_time = time.time() - self.start_time
             steps_per_sec = (self.step + 1) / elapsed_time if elapsed_time > 0 else 0
             tokens_per_sec = steps_per_sec * self.config.effective_batch_size * self.config.context_length
 
-            # Add memory efficiency metrics
             memory_stats = self.model.get_memory_stats()
             if memory_stats:
                 memory_efficiency = memory_stats.get("parameter_memory_gb", 0) / memory_stats.get(
@@ -509,7 +484,6 @@ class OptimizedTrainer:
                 }
             )
 
-            # Logging
             if self.step % self.config.log_interval == 0:
                 tokens_this_step = self.config.effective_batch_size * self.config.context_length
                 samples_this_step = self.config.effective_batch_size
@@ -539,7 +513,6 @@ class OptimizedTrainer:
                         f"{tokens_per_sec:.0f} tok/s, ETA: {eta_minutes:.1f}min{memory_info}"
                     )
 
-            # Evaluation
             if self.step % self.config.eval_interval == 0 and self.step > 0:
                 eval_metrics = self.evaluate()
                 if eval_metrics:
@@ -549,14 +522,12 @@ class OptimizedTrainer:
                         perplexity=eval_metrics["perplexity"],
                     )
 
-            # Checkpointing
             if self.step % self.config.save_interval == 0 and self.step > 0:
                 checkpoint_path = Path(self.config.checkpoint_dir) / f"checkpoint_step_{self.step}.pt"
                 self.save_checkpoint(str(checkpoint_path))
 
             self.step += 1
 
-        # Final evaluation and checkpoint
         final_eval = self.evaluate()
         if final_eval:
             self.training_integrator.log_validation_step(
@@ -600,7 +571,7 @@ def create_optimized_configs() -> None:
         num_layers=4,
         num_heads=16,
         d_ff=1344,
-        max_steps=12800,  # 327M tokens = 64 * 12800 * 256
+        max_steps=12800,
         batch_size=64,
         learning_rate=6e-4,
         experiment_name="tinystories_h100_optimized",
@@ -724,7 +695,7 @@ def main() -> None:
     config_save_path = Path(config.checkpoint_dir) / "config.json"
     save_config(config, str(config_save_path))
 
-    trainer = OptimizedTrainer(config)
+    trainer = Trainer(config)
     trainer.train()
 
 
