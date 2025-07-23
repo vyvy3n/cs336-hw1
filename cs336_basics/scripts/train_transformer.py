@@ -335,6 +335,18 @@ class Trainer:
                 prefetch_factor=self.config.prefetch_factor,
             )
 
+    def _ensure_val_loader(self) -> None:
+        """Ensure validation loader is set up if validation data is available."""
+        if self.val_loader is None and self.config.val_data_path and Path(self.config.val_data_path).exists():
+            self.val_loader = DataLoader(
+                data_path=self.config.val_data_path,
+                batch_size=self.config.batch_size,
+                context_length=self.config.context_length,
+                device=str(self.device),
+                pin_memory=self.config.pin_memory,
+                prefetch_factor=self.config.prefetch_factor,
+            )
+
     def _try_resume(self) -> None:
         """Try to resume from checkpoint."""
         checkpoint_path = None
@@ -380,7 +392,7 @@ class Trainer:
             inputs, targets = self.train_loader.get_batch()
 
             if self.scaler is not None:
-                with autocast():
+                with autocast(device_type=self.device.type):
                     logits = self.model(inputs)
                     loss = cross_entropy(logits, targets)
                     loss = loss / self.config.gradient_accumulation_steps
@@ -411,6 +423,7 @@ class Trainer:
 
     def evaluate(self) -> dict[str, Any]:
         """Optimized evaluation with mixed precision."""
+        self._ensure_val_loader()
         if self.val_loader is None:
             return {}
 
@@ -424,7 +437,7 @@ class Trainer:
                     inputs, targets = self.val_loader.get_batch()
 
                     if self.scaler is not None:
-                        with autocast():
+                        with autocast(device_type=self.device.type):
                             logits = self.model(inputs)
                             loss = cross_entropy(logits, targets)
                     else:
