@@ -605,8 +605,9 @@ class TestIntegration:
             checkpoint_dir = Path(config.checkpoint_dir)
             assert checkpoint_dir.exists()
 
-            final_checkpoint = checkpoint_dir / "checkpoint_final.pt"
-            assert final_checkpoint.exists()
+            # Check for new filename pattern: checkpoint_final_time_{hours}h_step_{step}.pt
+            final_checkpoints = list(checkpoint_dir.glob("checkpoint_final_time_*h_step_*.pt"))
+            assert len(final_checkpoints) > 0, f"No final checkpoint found in {checkpoint_dir}"
 
             mock_integrator_instance.start_epoch.assert_called_once()
             mock_integrator_instance.log_training_step.assert_called()
