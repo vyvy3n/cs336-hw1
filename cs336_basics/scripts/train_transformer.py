@@ -26,6 +26,7 @@ import os
 import time
 import warnings
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -199,8 +200,11 @@ class Trainer:
         self.step = 0
         self.start_time = time.time()
 
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamped_experiment_name = f"{config.experiment_name}_{timestamp}"
+
         self.experiment_logger = ExperimentLogger(
-            experiment_name=config.experiment_name,
+            experiment_name=timestamped_experiment_name,
             description=config.experiment_description,
             log_dir="experiments",
             use_wandb=config.use_wandb,

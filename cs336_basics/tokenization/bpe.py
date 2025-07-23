@@ -7,12 +7,10 @@ It includes pre-tokenization, merge computation, and vocabulary construction.
 
 from __future__ import annotations
 
-import os
 import re
 from collections import Counter, defaultdict
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
-from typing import Iterable, Iterator
 
 import regex
 
