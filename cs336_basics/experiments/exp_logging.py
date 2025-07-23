@@ -260,9 +260,10 @@ class TrainingIntegrator:
         samples_processed: int,
         step_time: float,
         tokens_per_sec: float,
+        wallclock_time: float | None = None,
         **additional_metrics,
     ):
-        """Log comprehensive training step metrics."""
+        """Log comprehensive training step metrics with optional wallclock time."""
         self.step_count = step
         self.total_tokens_processed += tokens_processed
         self.total_samples_processed += samples_processed
@@ -283,13 +284,15 @@ class TrainingIntegrator:
             **additional_metrics,
         }
 
-        self.logger.log_metrics(step, **metrics)
+        # Use wallclock time as x-axis if provided, otherwise use step
+        x_axis_value = wallclock_time if wallclock_time is not None else step
+        self.logger.log_metrics(x_axis_value, **metrics)
 
         if step % self.hardware_log_interval == 0:
-            self._log_hardware_stats(step)
+            self._log_hardware_stats(x_axis_value)
 
-    def log_validation_step(self, step: int, val_loss: float, perplexity: float, **additional_metrics):
-        """Log validation metrics."""
+    def log_validation_step(self, step: int, val_loss: float, perplexity: float, wallclock_time: float | None = None, **additional_metrics):
+        """Log validation metrics with optional wallclock time."""
         metrics = {"val_loss": val_loss, "val_perplexity": perplexity, **additional_metrics}
 
         if val_loss < self.best_val_loss:
@@ -301,7 +304,9 @@ class TrainingIntegrator:
             self.steps_since_improvement += 1
             metrics["steps_since_improvement"] = self.steps_since_improvement
 
-        self.logger.log_metrics(step, **metrics)
+        # Use wallclock time as x-axis if provided, otherwise use step
+        x_axis_value = wallclock_time if wallclock_time is not None else step
+        self.logger.log_metrics(x_axis_value, **metrics)
 
     def _log_hardware_stats(self, step: int):
         """Log detailed hardware utilization stats."""

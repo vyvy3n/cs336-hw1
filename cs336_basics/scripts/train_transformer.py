@@ -68,6 +68,7 @@ class TrainingConfig:
 
     # Training parameters
     max_steps: int = 12800
+    max_wallclock_hours: float = 1.5
     batch_size: int = 64
     gradient_accumulation_steps: int = 1
     learning_rate: float = 6e-4
@@ -117,6 +118,7 @@ class TrainingConfig:
         assert self.d_model > 0, "d_model must be positive"
         assert self.d_model % self.num_heads == 0, "d_model must be divisible by num_heads"
         assert self.max_steps > 0, "max_steps must be positive"
+        assert self.max_wallclock_hours > 0, "max_wallclock_hours must be positive"
         assert self.batch_size > 0, "batch_size must be positive"
         assert self.learning_rate > 0, "learning_rate must be positive"
 
@@ -452,19 +454,38 @@ class Trainer:
         print(f"Checkpoint saved: {path}")
 
     def train(self) -> None:
-        """Main optimized training loop."""
+        """Main optimized training loop with wallclock time limitation."""
+        max_time_seconds = self.config.max_wallclock_hours * 3600
         print("Starting optimized training with AMP and gradient checkpointing...")
-        print(f"Target runtime: 30-40 minutes for {self.config.max_steps} steps")
+        print(f"Maximum training time: {self.config.max_wallclock_hours:.1f} hours")
+        print(f"Target steps: {self.config.max_steps} (will stop early if time limit reached)")
 
         self.training_integrator.start_epoch(0)
+
+        # Track intervals based on time instead of steps for more consistent logging
+        # For short training runs (tests), fall back to step-based logging
+        use_step_based_logging = self.config.max_steps <= 10 or self.config.max_wallclock_hours <= 0.1
+
+        last_log_time = self.start_time
+        last_eval_time = self.start_time
+        last_save_time = self.start_time
+        log_interval_seconds = 30  # Log every 30 seconds
+        eval_interval_seconds = 300  # Evaluate every 5 minutes
+        save_interval_seconds = 600  # Save checkpoint every 10 minutes
 
         while self.step < self.config.max_steps:
             step_start_time = time.time()
 
+            # Check wallclock time limit
+            elapsed_time = step_start_time - self.start_time
+            if elapsed_time >= max_time_seconds:
+                print(f"Reached wallclock time limit of {self.config.max_wallclock_hours:.1f} hours")
+                break
+
             metrics = self.train_step()
 
             step_time = time.time() - step_start_time
-            elapsed_time = time.time() - self.start_time
+            elapsed_hours = elapsed_time / 3600
             steps_per_sec = (self.step + 1) / elapsed_time if elapsed_time > 0 else 0
             tokens_per_sec = steps_per_sec * self.config.effective_batch_size * self.config.context_length
 
@@ -480,15 +501,23 @@ class Trainer:
                     "step_time": step_time,
                     "steps_per_sec": steps_per_sec,
                     "tokens_per_sec": tokens_per_sec,
-                    "elapsed_time": elapsed_time,
+                    "elapsed_time_hours": elapsed_hours,
+                    "elapsed_time_seconds": elapsed_time,
                 }
             )
 
-            if self.step % self.config.log_interval == 0:
+            # Time-based logging instead of step-based (unless it's a short run like tests)
+            current_time = time.time()
+            should_log = (use_step_based_logging and self.step % self.config.log_interval == 0) or (
+                not use_step_based_logging and current_time - last_log_time >= log_interval_seconds
+            )
+
+            if should_log:
                 tokens_this_step = self.config.effective_batch_size * self.config.context_length
                 samples_this_step = self.config.effective_batch_size
 
                 self.training_integrator.log_training_step(
+                    wallclock_time=elapsed_hours,  # Use wallclock time as x-axis
                     step=self.step,
                     train_loss=metrics["loss"],
                     learning_rate=metrics["lr"],
@@ -498,52 +527,73 @@ class Trainer:
                     tokens_per_sec=tokens_per_sec,
                 )
 
-                if steps_per_sec > 0:
-                    remaining_steps = self.config.max_steps - self.step
-                    eta_seconds = remaining_steps / steps_per_sec
-                    eta_minutes = eta_seconds / 60
+                remaining_time_hours = self.config.max_wallclock_hours - elapsed_hours
+                memory_info = ""
+                if memory_stats:
+                    memory_info = f" | Mem: {memory_stats.get('memory_allocated_gb', 0):.1f}GB"
 
-                    memory_info = ""
-                    if memory_stats:
-                        memory_info = f" | Mem: {memory_stats.get('memory_allocated_gb', 0):.1f}GB"
+                print(
+                    f"Time: {elapsed_hours:.2f}h/{self.config.max_wallclock_hours:.1f}h | "
+                    f"Step {self.step}: loss={metrics['loss']:.4f}, lr={metrics['lr']:.2e}, "
+                    f"{tokens_per_sec:.0f} tok/s, Remaining: {remaining_time_hours:.2f}h{memory_info}"
+                )
 
-                    print(
-                        f"Step {self.step}/{self.config.max_steps}: "
-                        f"loss={metrics['loss']:.4f}, lr={metrics['lr']:.2e}, "
-                        f"{tokens_per_sec:.0f} tok/s, ETA: {eta_minutes:.1f}min{memory_info}"
-                    )
+                last_log_time = current_time
 
-            if self.step % self.config.eval_interval == 0 and self.step > 0:
+            # Time-based evaluation (unless it's a short run like tests)
+            should_eval = (use_step_based_logging and self.step % self.config.eval_interval == 0 and self.step > 0) or (
+                not use_step_based_logging and current_time - last_eval_time >= eval_interval_seconds and self.step > 0
+            )
+
+            if should_eval:
                 eval_metrics = self.evaluate()
                 if eval_metrics:
                     self.training_integrator.log_validation_step(
+                        wallclock_time=elapsed_hours,
                         step=self.step,
                         val_loss=eval_metrics["loss"],
                         perplexity=eval_metrics["perplexity"],
                     )
+                last_eval_time = current_time
 
-            if self.step % self.config.save_interval == 0 and self.step > 0:
-                checkpoint_path = Path(self.config.checkpoint_dir) / f"checkpoint_step_{self.step}.pt"
+            # Time-based checkpointing (unless it's a short run like tests)
+            should_save = (use_step_based_logging and self.step % self.config.save_interval == 0 and self.step > 0) or (
+                not use_step_based_logging and current_time - last_save_time >= save_interval_seconds and self.step > 0
+            )
+
+            if should_save:
+                checkpoint_path = (
+                    Path(self.config.checkpoint_dir) / f"checkpoint_time_{elapsed_hours:.2f}h_step_{self.step}.pt"
+                )
                 self.save_checkpoint(str(checkpoint_path))
+                last_save_time = current_time
 
             self.step += 1
+
+        # Final evaluation and checkpoint
+        final_elapsed_time = time.time() - self.start_time
+        final_elapsed_hours = final_elapsed_time / 3600
 
         final_eval = self.evaluate()
         if final_eval:
             self.training_integrator.log_validation_step(
+                wallclock_time=final_elapsed_hours,
                 step=self.step,
                 val_loss=final_eval["loss"],
                 perplexity=final_eval["perplexity"],
             )
 
-        final_checkpoint = Path(self.config.checkpoint_dir) / "checkpoint_final.pt"
+        final_checkpoint = (
+            Path(self.config.checkpoint_dir) / f"checkpoint_final_time_{final_elapsed_hours:.2f}h_step_{self.step}.pt"
+        )
         self.save_checkpoint(str(final_checkpoint))
 
-        total_time = time.time() - self.start_time
-        self.experiment_logger.add_note(f"Training completed in {total_time / 60:.1f} minutes")
+        self.experiment_logger.add_note(f"Training completed in {final_elapsed_hours:.2f} hours")
         self.experiment_logger.mark_completed()
 
-        print(f"Training completed in {total_time / 60:.1f} minutes!")
+        print(f"Training completed in {final_elapsed_hours:.2f} hours after {self.step} steps!")
+        if final_eval:
+            print(f"Final validation loss: {final_eval['loss']:.4f}, Perplexity: {final_eval['perplexity']:.2f}")
 
 
 def load_config(config_path: str) -> TrainingConfig:
@@ -631,6 +681,7 @@ def main() -> None:
 
     # Training parameters
     parser.add_argument("--max_steps", type=int, default=12800, help="Maximum training steps")
+    parser.add_argument("--max_wallclock_hours", type=float, default=1.5, help="Maximum training time in hours")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=6e-4, help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay")
@@ -674,6 +725,7 @@ def main() -> None:
             num_heads=args.num_heads,
             d_ff=args.d_ff,
             max_steps=args.max_steps,
+            max_wallclock_hours=args.max_wallclock_hours,
             batch_size=args.batch_size,
             learning_rate=args.learning_rate,
             weight_decay=args.weight_decay,
