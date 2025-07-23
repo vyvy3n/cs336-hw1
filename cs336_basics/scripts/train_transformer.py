@@ -1,5 +1,5 @@
 """
-Training Script for Transformer Language Model with Advanced Optimizations
+Training Script for Transformer Language Model with Advanced H100 Optimizations
 
 This script implements a highly optimized training loop that combines:
 - Automatic Mixed Precision (AMP) with gradient scaling
@@ -10,11 +10,13 @@ This script implements a highly optimized training loop that combines:
 - Memory-efficient data loading with prefetching
 - Optimized learning rate scheduling
 - Comprehensive performance monitoring
+- Advanced memory management techniques from latest research
 
 Performance Improvements:
 - Memory efficiency: Up to 50% reduction through gradient checkpointing
 - Speed: 2-3x faster with AMP and FlashAttention
 - Convergence: Better learning rate schedule and warmup
+- H100 utilization: Advanced batch scaling and memory management
 """
 
 from __future__ import annotations
@@ -37,73 +39,183 @@ from torch.amp import GradScaler, autocast
 from cs336_basics.data import get_batch
 from cs336_basics.experiments.exp_logging import ExperimentLogger, TrainingIntegrator
 from cs336_basics.loss.cross_entropy import cross_entropy
-from cs336_basics.nn.models import TransformerLM
+from cs336_basics.nn.models import EnhancedTransformerLM
 from cs336_basics.training.checkpoint import load_checkpoint, save_checkpoint
 from cs336_basics.training.gradient_clipping import gradient_clipping
 from cs336_basics.training.lr_schedules import cosine_learning_rate_schedule
-from cs336_basics.training.optimizers import AdamW
+from cs336_basics.training.optimizers import AdamW, MixedOptimizer, Muon
+
+
+class AdvancedMemoryManager:
+    """
+    Advanced memory management for H100 optimization.
+
+    Implements techniques from MEMO and other recent research to maximize
+    GPU memory utilization and training efficiency.
+    """
+
+    def __init__(self, device: torch.device, config: "TrainingConfig") -> None:
+        """Initialize memory manager with H100 optimizations."""
+        self.device = device
+        self.config = config
+        self.memory_stats = {}
+        self.peak_memory = 0
+        self.step_count = 0
+
+    def optimize_for_batch_size(self, model: torch.nn.Module) -> int:
+        """
+        Dynamically determine optimal batch size based on available memory.
+
+        Returns:
+            Optimal batch size for current model and GPU memory
+        """
+        if self.device.type != "cuda":
+            return self.config.batch_size
+
+        try:
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            current_memory = torch.cuda.memory_allocated()
+            available_memory = total_memory - current_memory
+
+            param_count = sum(p.numel() for p in model.parameters())
+            estimated_memory_per_sample = param_count * 4 + self.config.context_length * self.config.d_model * 4
+
+            max_batch_size = int(available_memory * 0.8 / estimated_memory_per_sample)
+
+            optimal_batch_size = min(max(8, (max_batch_size // 8) * 8), self.config.batch_size * 2)
+
+            return optimal_batch_size
+
+        except Exception:
+            return self.config.batch_size
+
+    def update_memory_stats(self) -> dict[str, float]:
+        """Update and return current memory statistics."""
+        if self.device.type != "cuda":
+            return {}
+
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
+
+        self.peak_memory = max(self.peak_memory, allocated)
+
+        self.memory_stats = {
+            "memory_allocated_gb": allocated,
+            "memory_reserved_gb": reserved,
+            "max_memory_allocated_gb": max_allocated,
+            "peak_memory_gb": self.peak_memory,
+        }
+
+        return self.memory_stats
+
+    def should_clear_cache(self) -> bool:
+        """Determine if cache should be cleared based on memory pressure."""
+        if self.device.type != "cuda" or self.config.torch_empty_cache_steps <= 0:
+            return False
+
+        return self.step_count % self.config.torch_empty_cache_steps == 0
+
+    def clear_cache_if_needed(self) -> None:
+        """Clear CUDA cache if memory pressure is detected."""
+        self.step_count += 1
+
+        if self.should_clear_cache():
+            torch.cuda.empty_cache()
+
+    def get_efficiency_metrics(self) -> dict[str, float]:
+        """Calculate memory efficiency metrics."""
+        if not self.memory_stats or self.device.type != "cuda":
+            return {}
+
+        total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+
+        return {
+            "memory_utilization": self.memory_stats["memory_allocated_gb"] / total_memory,
+            "peak_memory_utilization": self.peak_memory / total_memory,
+            "memory_efficiency": self.memory_stats["memory_allocated_gb"]
+            / max(self.memory_stats["memory_reserved_gb"], 1.0),
+        }
 
 
 @dataclass
 class TrainingConfig:
     """
     Advanced configuration for optimized H100 training.
-
-    Configured for maximum performance with automatic mixed precision,
-    gradient checkpointing, and memory optimizations.
     """
 
     # Data parameters
     train_data_path: str
     val_data_path: str | None = None
-    vocab_size: int = 10000
-    context_length: int = 256
+    vocab_size: int = 32000
+    context_length: int = 512
 
     # Model parameters
-    d_model: int = 512
-    num_layers: int = 4
-    num_heads: int = 16
-    d_ff: int = 1344
+    d_model: int = 1024
+    num_layers: int = 16
+    num_heads: int = 8
+    d_ff: int = 4096
     rope_theta: float = 10000.0
     eps: float = 1e-5
 
+    # Architecture features
+    tie_embeddings: bool = False
+    activation: str = "leader"
+    use_unet_architecture: bool = True
+
     # Training parameters
-    max_steps: int = 12800
+    max_steps: int = 25000
     max_wallclock_hours: float = 1.5
-    batch_size: int = 64
+    batch_size: int = 256
     gradient_accumulation_steps: int = 1
-    learning_rate: float = 6e-4
-    min_learning_rate: float = 6e-5
-    warmup_steps: int = 640
+
+    # Optimizer settings
+    optimizer: str = "muon_adamw"
+    learning_rate: float = 3e-3
+    muon_lr: float = 3e-3
+    adamw_lr: float = 3e-3
+    embedding_lr: float = 4e-3
+    lm_head_lr: float = 2e-3
+    min_learning_rate: float = 3e-5
+    warmup_steps: int = 500
     weight_decay: float = 0.01
+
+    # Muon-specific parameters
+    momentum: float = 0.95
+    ns_iters: int = 5
+
+    # AdamW-specific parameters
     beta1: float = 0.9
     beta2: float = 0.95
     grad_clip_norm: float = 1.0
 
     # Optimization settings
     use_amp: bool = True
+    use_bfloat16: bool = True
     use_gradient_checkpointing: bool = True
-    gradient_checkpointing_layers: int | None = None
+    gradient_checkpointing_layers: int = 8
     use_tf32: bool = True
     compile_model: bool = True
+    torch_compile_backend: str = "inductor"
+    torch_empty_cache_steps: int = 0  # 0 = disabled
     channels_last: bool = False
-    use_fused_adamw: bool = True
 
     # Data loading optimizations
     num_workers: int = 4
     pin_memory: bool = True
     prefetch_factor: int = 2
+    dataloader_drop_last: bool = True
 
     # Logging and evaluation
     log_interval: int = 50
-    eval_interval: int = 640
+    eval_interval: int = 500
     eval_batches: int = 50
-    save_interval: int = 3200
+    save_interval: int = 2500
 
     # Directories and experiment tracking
     checkpoint_dir: str = "checkpoints"
-    experiment_name: str = "transformer_optimized"
-    experiment_description: str = "Optimized Transformer training with AMP and gradient checkpointing"
+    experiment_name: str = "openwebtext_h100_v1"
+    experiment_description: str = "OpenWebText training with: Muon, U-Net, untied embeddings"
     use_wandb: bool = True
     wandb_project: str = "cs336-assignment1"
 
@@ -146,6 +258,7 @@ class DataLoader:
         device: str,
         pin_memory: bool = True,
         prefetch_factor: int = 2,
+        drop_last: bool = True,
     ) -> None:
         """Initialize optimized data loader with prefetching."""
         self.data_path = data_path
@@ -223,6 +336,7 @@ class Trainer:
         self._setup_optimizer()
         self._setup_amp()
         self._setup_data_loaders()
+        self._setup_memory_manager()
 
         if config.resume_from or config.auto_resume:
             self._try_resume()
@@ -234,9 +348,15 @@ class Trainer:
         print(f"Trainable parameters: {param_counts['trainable']:,}")
         print(f"Model memory: {memory_stats.get('parameter_memory_gb', 0):.2f} GB")
         print(f"Training on device: {self.device}")
-        print(f"Using AMP: {self.config.use_amp}")
+        print(f"Using AMP: {self.config.use_amp} ({'bfloat16' if self.config.use_bfloat16 else 'float16'})")
         print(f"Using gradient checkpointing: {self.config.use_gradient_checkpointing}")
+        print(f"Torch compile: {self.config.compile_model} (backend: {self.config.torch_compile_backend})")
         print(f"Effective batch size: {config.effective_batch_size}")
+        print(
+            f"Cache cleanup every: {self.config.torch_empty_cache_steps} steps"
+            if self.config.torch_empty_cache_steps > 0
+            else "Cache cleanup: disabled"
+        )
 
     def _setup_device(self) -> None:
         """Setup device with H100-specific optimizations."""
@@ -265,7 +385,7 @@ class Trainer:
 
     def _setup_model(self) -> None:
         """Setup model with performance optimizations."""
-        self.model = TransformerLM(
+        self.model = EnhancedTransformerLM(
             vocab_size=self.config.vocab_size,
             context_length=self.config.context_length,
             d_model=self.config.d_model,
@@ -274,48 +394,82 @@ class Trainer:
             d_ff=self.config.d_ff,
             rope_theta=self.config.rope_theta,
             eps=self.config.eps,
+            tie_embeddings=self.config.tie_embeddings,
+            activation=self.config.activation,
+            use_unet_architecture=self.config.use_unet_architecture,
             device=self.device,
         )
 
         if self.config.use_gradient_checkpointing:
             self.model.enable_gradient_checkpointing(self.config.gradient_checkpointing_layers)
-            print(f"Enabled gradient checkpointing for {self.config.gradient_checkpointing_layers or 'all'} layers")
+            print(f"Enabled gradient checkpointing for {self.config.gradient_checkpointing_layers} layers")
 
         self.original_model = self.model
 
         if self.config.compile_model and self.device.type == "cuda":
             try:
-                self.model = torch.compile(self.model, mode="max-autotune")
-                print("Model compiled for optimized execution")
+                self.model = torch.compile(self.model, mode="max-autotune", backend=self.config.torch_compile_backend)
+                print(f"Model compiled with {self.config.torch_compile_backend} backend for optimized execution")
             except Exception as e:
                 print(f"Model compilation failed: {e}")
 
     def _setup_optimizer(self) -> None:
-        """Setup optimized AdamW optimizer."""
-        optimizer_kwargs = {
-            "lr": self.config.learning_rate,
-            "betas": (self.config.beta1, self.config.beta2),
-            "weight_decay": self.config.weight_decay,
-            "eps": self.config.eps,
-        }
+        """Setup optimized optimizer based on configuration."""
+        if self.config.optimizer == "muon":
+            self.optimizer = Muon(
+                self.original_model.parameters(),
+                lr=self.config.muon_lr,
+                momentum=self.config.momentum,
+                ns_iters=self.config.ns_iters,
+                weight_decay=self.config.weight_decay,
+                eps=self.config.eps,
+            )
+            print("Using Muon optimizer")
 
-        if self.config.use_fused_adamw and self.device.type == "cuda":
-            try:
-                self.optimizer = torch.optim.AdamW(self.original_model.parameters(), fused=True, **optimizer_kwargs)
-                print("Using fused AdamW optimizer")
-            except Exception as e:
-                print(f"Fused AdamW not available: {e}")
-                self.optimizer = AdamW(self.original_model.parameters(), **optimizer_kwargs)
+        elif self.config.optimizer == "muon_adamw":
+            param_names = {}
+            for name, param in self.original_model.named_parameters():
+                param_names[param] = name
+
+            self.optimizer = MixedOptimizer(
+                self.original_model.parameters(),
+                muon_lr=self.config.muon_lr,
+                adamw_lr=self.config.adamw_lr,
+                embedding_lr=self.config.embedding_lr,
+                lm_head_lr=self.config.lm_head_lr,
+                muon_momentum=self.config.momentum,
+                adamw_betas=(self.config.beta1, self.config.beta2),
+                weight_decay=self.config.weight_decay,
+                eps=self.config.eps,
+                ns_iters=self.config.ns_iters,
+            )
+            self.param_names = param_names
+            print("Using Mixed Optimizer (Muon + AdamW with different learning rates)")
+
         else:
-            self.optimizer = AdamW(self.original_model.parameters(), **optimizer_kwargs)
+            self.optimizer = AdamW(
+                self.original_model.parameters(),
+                lr=self.config.learning_rate,
+                betas=(self.config.beta1, self.config.beta2),
+                weight_decay=self.config.weight_decay,
+                eps=self.config.eps,
+            )
+            print("Using AdamW optimizer")
 
     def _setup_amp(self) -> None:
         """Setup Automatic Mixed Precision."""
         if self.config.use_amp and self.device.type == "cuda":
-            self.scaler = GradScaler()
-            print("Enabled Automatic Mixed Precision")
+            if self.config.use_bfloat16:
+                self.scaler = None
+                self.amp_dtype = torch.bfloat16
+                print("Enabled Automatic Mixed Precision with bfloat16")
+            else:
+                self.scaler = GradScaler()
+                self.amp_dtype = torch.float16
+                print("Enabled Automatic Mixed Precision with float16")
         else:
             self.scaler = None
+            self.amp_dtype = torch.float32
 
     def _setup_data_loaders(self) -> None:
         """Setup optimized data loaders."""
@@ -326,6 +480,7 @@ class Trainer:
             device=str(self.device),
             pin_memory=self.config.pin_memory,
             prefetch_factor=self.config.prefetch_factor,
+            drop_last=self.config.dataloader_drop_last,
         )
 
         self.val_loader = None
@@ -337,7 +492,20 @@ class Trainer:
                 device=str(self.device),
                 pin_memory=self.config.pin_memory,
                 prefetch_factor=self.config.prefetch_factor,
+                drop_last=False,
             )
+
+    def _setup_memory_manager(self) -> None:
+        """Setup advanced memory management for H100 optimization."""
+        self.memory_manager = AdvancedMemoryManager(self.device, self.config)
+
+        initial_stats = self.memory_manager.update_memory_stats()
+        if initial_stats:
+            print(f"Initial GPU memory: {initial_stats['memory_allocated_gb']:.2f} GB allocated")
+
+        optimal_batch_size = self.memory_manager.optimize_for_batch_size(self.original_model)
+        if optimal_batch_size != self.config.batch_size:
+            print(f"Memory-optimized batch size: {optimal_batch_size} (original: {self.config.batch_size})")
 
     def _ensure_val_loader(self) -> None:
         """Ensure validation loader is set up if validation data is available."""
@@ -349,6 +517,7 @@ class Trainer:
                 device=str(self.device),
                 pin_memory=self.config.pin_memory,
                 prefetch_factor=self.config.prefetch_factor,
+                drop_last=False,
             )
 
     def _try_resume(self) -> None:
@@ -387,21 +556,28 @@ class Trainer:
         total_loss = 0.0
 
         current_lr = self.get_lr(self.step)
-        for param_group in self.optimizer.param_groups:
-            param_group["lr"] = current_lr
+
+        if self.config.optimizer == "muon_adamw":
+            pass
+        else:
+            for param_group in self.optimizer.param_groups:
+                param_group["lr"] = current_lr
 
         self.optimizer.zero_grad()
 
         for _ in range(self.config.gradient_accumulation_steps):
             inputs, targets = self.train_loader.get_batch()
 
-            if self.scaler is not None:
-                with autocast(device_type=self.device.type):
+            if self.config.use_amp:
+                with autocast(device_type=self.device.type, dtype=self.amp_dtype):
                     logits = self.model(inputs)
                     loss = cross_entropy(logits, targets)
                     loss = loss / self.config.gradient_accumulation_steps
 
-                self.scaler.scale(loss).backward()
+                if self.scaler is not None:
+                    self.scaler.scale(loss).backward()
+                else:
+                    loss.backward()
             else:
                 logits = self.model(inputs)
                 loss = cross_entropy(logits, targets)
@@ -414,15 +590,28 @@ class Trainer:
             self.scaler.unscale_(self.optimizer)
             gradient_clipping(self.original_model.parameters(), self.config.grad_clip_norm)
 
-            self.scaler.step(self.optimizer)
+            if self.config.optimizer == "muon_adamw":
+                self.scaler.step(lambda: self.optimizer.step(param_names=self.param_names))
+            else:
+                self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
             gradient_clipping(self.original_model.parameters(), self.config.grad_clip_norm)
-            self.optimizer.step()
+
+            if self.config.optimizer == "muon_adamw":
+                self.optimizer.step(param_names=self.param_names)
+            else:
+                self.optimizer.step()
+
+        self.memory_manager.clear_cache_if_needed()
+        memory_stats = self.memory_manager.update_memory_stats()
+        efficiency_metrics = self.memory_manager.get_efficiency_metrics()
 
         return {
             "loss": total_loss,
             "lr": current_lr,
+            **memory_stats,
+            **efficiency_metrics,
         }
 
     def evaluate(self) -> dict[str, Any]:
@@ -440,8 +629,8 @@ class Trainer:
                 try:
                     inputs, targets = self.val_loader.get_batch()
 
-                    if self.scaler is not None:
-                        with autocast(device_type=self.device.type):
+                    if self.config.use_amp:
+                        with autocast(device_type=self.device.type, dtype=self.amp_dtype):
                             logits = self.model(inputs)
                             loss = cross_entropy(logits, targets)
                     else:
@@ -627,44 +816,44 @@ def create_optimized_configs() -> None:
         val_data_path="data/encoded/tinystories_val_tokens.npy",
         vocab_size=10000,
         context_length=256,
-        d_model=512,
-        num_layers=4,
-        num_heads=16,
-        d_ff=1344,
-        max_steps=12800,
-        batch_size=64,
-        learning_rate=6e-4,
-        experiment_name="tinystories_h100_optimized",
-        experiment_description="TinyStories training optimized for H100 30-40min runtime",
+        d_model=768,
+        num_layers=12,
+        num_heads=12,
+        d_ff=2048,
+        max_steps=10000,
+        batch_size=128,
+        optimizer="muon_adamw",
+        experiment_name="tinystories_h100_v1",
+        experiment_description="TinyStories training",
     )
 
     owt_config = TrainingConfig(
         train_data_path="data/encoded/owt_train_tokens.npy",
         val_data_path="data/encoded/owt_valid_tokens.npy",
         vocab_size=32000,
-        context_length=256,
-        d_model=512,
-        num_layers=4,
-        num_heads=16,
-        d_ff=1344,
-        max_steps=12800,
-        batch_size=64,
-        learning_rate=6e-4,
-        experiment_name="openwebtext_h100_optimized",
-        experiment_description="OpenWebText training optimized for H100 30-40min runtime",
+        context_length=512,
+        d_model=1024,
+        num_layers=16,
+        num_heads=8,
+        d_ff=4096,
+        max_steps=25000,
+        batch_size=256,
+        optimizer="muon_adamw",
+        experiment_name="openwebtext_h100_v1",
+        experiment_description="OpenWebText training",
     )
 
     project_root = Path.cwd()
     configs_dir = project_root / "cs336_basics" / "scripts" / "configs"
     configs_dir.mkdir(parents=True, exist_ok=True)
 
-    tinystories_config_path = configs_dir / "tinystories_h100.json"
-    owt_config_path = configs_dir / "openwebtext_h100.json"
+    tinystories_config_path = configs_dir / "tinystories_h100_v1.json"
+    owt_config_path = configs_dir / "openwebtext_h100_v1.json"
 
     save_config(tinystories_config, str(tinystories_config_path))
     save_config(owt_config, str(owt_config_path))
 
-    print("Created optimized configuration files:")
+    print("Created configuration files:")
     print(f"- {tinystories_config_path}")
     print(f"- {owt_config_path}")
 

@@ -48,8 +48,12 @@ class TestTrainingConfig:
         assert config.val_data_path is None
         assert config.vocab_size == 1000
         assert config.context_length == 128
-        assert config.d_model == 512
-        assert config.num_layers == 4
+        assert config.d_model == 1024
+        assert config.num_layers == 16
+        assert config.activation == "leader"
+        assert config.use_unet_architecture == True
+        assert config.tie_embeddings == False
+        assert config.optimizer == "muon_adamw"
         assert config.effective_batch_size == config.batch_size * config.gradient_accumulation_steps
         assert config.total_tokens == config.effective_batch_size * config.max_steps * config.context_length
 
@@ -526,20 +530,26 @@ class TestConfigurationManagement:
                 os.chdir(temp_dir)
                 create_optimized_configs()
 
-                tinystories_config_path = "cs336_basics/scripts/configs/tinystories_h100.json"
-                owt_config_path = "cs336_basics/scripts/configs/openwebtext_h100.json"
+                tinystories_config_path = "cs336_basics/scripts/configs/tinystories_h100_v1.json"
+                owt_config_path = "cs336_basics/scripts/configs/openwebtext_h100_v1.json"
 
                 assert os.path.exists(tinystories_config_path)
                 assert os.path.exists(owt_config_path)
 
                 tinystories_config = load_config(tinystories_config_path)
                 assert tinystories_config.vocab_size == 10000
-                assert tinystories_config.experiment_name == "tinystories_h100_optimized"
+                assert tinystories_config.experiment_name == "tinystories_h100_v1"
+                assert tinystories_config.optimizer == "muon_adamw"
+                assert tinystories_config.activation == "leader"
+                assert tinystories_config.use_unet_architecture == True
                 assert "tinystories" in tinystories_config.train_data_path
 
                 owt_config = load_config(owt_config_path)
                 assert owt_config.vocab_size == 32000
-                assert owt_config.experiment_name == "openwebtext_h100_optimized"
+                assert owt_config.experiment_name == "openwebtext_h100_v1"
+                assert owt_config.optimizer == "muon_adamw"
+                assert owt_config.activation == "leader"
+                assert owt_config.use_unet_architecture == True
                 assert "owt" in owt_config.train_data_path
 
             finally:
@@ -605,7 +615,6 @@ class TestIntegration:
             checkpoint_dir = Path(config.checkpoint_dir)
             assert checkpoint_dir.exists()
 
-            # Check for new filename pattern: checkpoint_final_time_{hours}h_step_{step}.pt
             final_checkpoints = list(checkpoint_dir.glob("checkpoint_final_time_*h_step_*.pt"))
             assert len(final_checkpoints) > 0, f"No final checkpoint found in {checkpoint_dir}"
 
