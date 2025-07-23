@@ -284,12 +284,18 @@ class TrainingIntegrator:
             **additional_metrics,
         }
 
-        # Use wallclock time as x-axis if provided, otherwise use step
-        x_axis_value = wallclock_time if wallclock_time is not None else step
-        self.logger.log_metrics(x_axis_value, **metrics)
+        # Use wallclock time as step for W&B if provided, otherwise use step number
+        if wallclock_time is not None:
+            metrics["wallclock_hours"] = wallclock_time
+            metrics["step_number"] = step  # Keep original step as metric
+            # Convert wallclock hours to integer deciseconds for W&B step (good resolution)
+            wallclock_step = int(wallclock_time * 36000)  # hours -> deciseconds
+            self.logger.log_metrics(wallclock_step, **metrics)
+        else:
+            self.logger.log_metrics(step, **metrics)
 
         if step % self.hardware_log_interval == 0:
-            self._log_hardware_stats(x_axis_value)
+            self._log_hardware_stats(step if wallclock_time is None else int(wallclock_time * 36000))
 
     def log_validation_step(self, step: int, val_loss: float, perplexity: float, wallclock_time: float | None = None, **additional_metrics):
         """Log validation metrics with optional wallclock time."""
@@ -304,9 +310,15 @@ class TrainingIntegrator:
             self.steps_since_improvement += 1
             metrics["steps_since_improvement"] = self.steps_since_improvement
 
-        # Use wallclock time as x-axis if provided, otherwise use step
-        x_axis_value = wallclock_time if wallclock_time is not None else step
-        self.logger.log_metrics(x_axis_value, **metrics)
+        # Use wallclock time as step for W&B if provided, otherwise use step number  
+        if wallclock_time is not None:
+            metrics["wallclock_hours"] = wallclock_time
+            metrics["step_number"] = step  # Keep original step as metric
+            # Convert wallclock hours to integer deciseconds for W&B step (good resolution)
+            wallclock_step = int(wallclock_time * 36000)  # hours -> deciseconds
+            self.logger.log_metrics(wallclock_step, **metrics)
+        else:
+            self.logger.log_metrics(step, **metrics)
 
     def _log_hardware_stats(self, step: int):
         """Log detailed hardware utilization stats."""
