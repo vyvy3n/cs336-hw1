@@ -284,12 +284,10 @@ class TrainingIntegrator:
             **additional_metrics,
         }
 
-        # Use wallclock time as step for W&B if provided, otherwise use step number
         if wallclock_time is not None:
             metrics["wallclock_hours"] = wallclock_time
-            metrics["step_number"] = step  # Keep original step as metric
-            # Convert wallclock hours to integer deciseconds for W&B step (good resolution)
-            wallclock_step = int(wallclock_time * 36000)  # hours -> deciseconds
+            metrics["step_number"] = step
+            wallclock_step = int(wallclock_time * 36000)
             self.logger.log_metrics(wallclock_step, **metrics)
         else:
             self.logger.log_metrics(step, **metrics)
@@ -310,12 +308,10 @@ class TrainingIntegrator:
             self.steps_since_improvement += 1
             metrics["steps_since_improvement"] = self.steps_since_improvement
 
-        # Use wallclock time as step for W&B if provided, otherwise use step number  
         if wallclock_time is not None:
             metrics["wallclock_hours"] = wallclock_time
-            metrics["step_number"] = step  # Keep original step as metric
-            # Convert wallclock hours to integer deciseconds for W&B step (good resolution)
-            wallclock_step = int(wallclock_time * 36000)  # hours -> deciseconds
+            metrics["step_number"] = step
+            wallclock_step = int(wallclock_time * 36000)
             self.logger.log_metrics(wallclock_step, **metrics)
         else:
             self.logger.log_metrics(step, **metrics)

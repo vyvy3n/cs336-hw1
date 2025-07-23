@@ -475,21 +475,18 @@ class Trainer:
 
         self.training_integrator.start_epoch(0)
 
-        # Track intervals based on time instead of steps for more consistent logging
-        # For short training runs (tests), fall back to step-based logging
         use_step_based_logging = self.config.max_steps <= 10 or self.config.max_wallclock_hours <= 0.1
 
         last_log_time = self.start_time
         last_eval_time = self.start_time
         last_save_time = self.start_time
-        log_interval_seconds = 30  # Log every 30 seconds
-        eval_interval_seconds = 300  # Evaluate every 5 minutes
-        save_interval_seconds = 600  # Save checkpoint every 10 minutes
+        log_interval_seconds = 30
+        eval_interval_seconds = 300
+        save_interval_seconds = 600
 
         while self.step < self.config.max_steps:
             step_start_time = time.time()
 
-            # Check wallclock time limit
             elapsed_time = step_start_time - self.start_time
             if elapsed_time >= max_time_seconds:
                 print(f"Reached wallclock time limit of {self.config.max_wallclock_hours:.1f} hours")
@@ -519,7 +516,6 @@ class Trainer:
                 }
             )
 
-            # Time-based logging instead of step-based (unless it's a short run like tests)
             current_time = time.time()
             should_log = (use_step_based_logging and self.step % self.config.log_interval == 0) or (
                 not use_step_based_logging and current_time - last_log_time >= log_interval_seconds
@@ -530,7 +526,7 @@ class Trainer:
                 samples_this_step = self.config.effective_batch_size
 
                 self.training_integrator.log_training_step(
-                    wallclock_time=elapsed_hours,  # Use wallclock time as x-axis
+                    wallclock_time=elapsed_hours,
                     step=self.step,
                     train_loss=metrics["loss"],
                     learning_rate=metrics["lr"],
@@ -553,7 +549,6 @@ class Trainer:
 
                 last_log_time = current_time
 
-            # Time-based evaluation (unless it's a short run like tests)
             should_eval = (use_step_based_logging and self.step % self.config.eval_interval == 0 and self.step > 0) or (
                 not use_step_based_logging and current_time - last_eval_time >= eval_interval_seconds and self.step > 0
             )
@@ -569,7 +564,6 @@ class Trainer:
                     )
                 last_eval_time = current_time
 
-            # Time-based checkpointing (unless it's a short run like tests)
             should_save = (use_step_based_logging and self.step % self.config.save_interval == 0 and self.step > 0) or (
                 not use_step_based_logging and current_time - last_save_time >= save_interval_seconds and self.step > 0
             )
@@ -583,7 +577,6 @@ class Trainer:
 
             self.step += 1
 
-        # Final evaluation and checkpoint
         final_elapsed_time = time.time() - self.start_time
         final_elapsed_hours = final_elapsed_time / 3600
 
