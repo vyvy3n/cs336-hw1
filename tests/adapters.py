@@ -25,6 +25,7 @@ from modules.transformer_lm import TransformerLM
 from modules.loss import cross_entropy
 from optimizer.adamw import AdamW
 from optimizer.cosine_schedule import get_lr_cosine_schedule
+from optimizer.gradient_clipping import gradient_clipping
 
 
 
@@ -585,7 +586,7 @@ def run_gradient_clipping(
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    return gradient_clipping(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> type[torch.optim.Optimizer]:
