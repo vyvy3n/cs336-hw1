@@ -198,20 +198,20 @@ def test_swiglu(numpy_snapshot, ts_state_dict, in_embeddings, d_model, d_ff):
 #     )
 
 
-# def test_rmsnorm(numpy_snapshot, ts_state_dict, in_embeddings):
-#     state_dict, _ = ts_state_dict
-#     reference_weights = state_dict["layers.1.ln1.weight"]
-#     d_model = reference_weights.shape[0]
-#     # reference_weights = torch.load(FIXTURES_PATH / "rmsnorm_weights.pt")
-#     # in_features = torch.load(FIXTURES_PATH / "in_features.pt")
-#     # expected_output = torch.load(FIXTURES_PATH / "rmsnorm_expected_output.pt")
-#     # actual_output = run_rmsnorm(d_model=d_model, eps=1e-5, weights=reference_weights, in_features=in_features)
+def test_rmsnorm(numpy_snapshot, ts_state_dict, in_embeddings):
+    state_dict, _ = ts_state_dict
+    reference_weights = state_dict["layers.1.ln1.weight"]
+    d_model = reference_weights.shape[0]
+    # reference_weights = torch.load(FIXTURES_PATH / "rmsnorm_weights.pt")
+    # in_features = torch.load(FIXTURES_PATH / "in_features.pt")
+    # expected_output = torch.load(FIXTURES_PATH / "rmsnorm_expected_output.pt")
+    # actual_output = run_rmsnorm(d_model=d_model, eps=1e-5, weights=reference_weights, in_features=in_features)
 
-#     # in_features = torch.randn()
+    # in_features = torch.randn()
 
-#     actual_output = run_rmsnorm(d_model=d_model, eps=1e-5, weights=reference_weights, in_features=in_embeddings)
+    actual_output = run_rmsnorm(d_model=d_model, eps=1e-5, weights=reference_weights, in_features=in_embeddings)
 
-#     numpy_snapshot.assert_match(actual_output, atol=1e-6)
+    numpy_snapshot.assert_match(actual_output, atol=1e-6)
 
 
 # def test_rope(numpy_snapshot, in_embeddings, d_model, theta, n_queries, pos_ids):

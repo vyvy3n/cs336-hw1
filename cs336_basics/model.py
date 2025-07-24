@@ -33,17 +33,20 @@ torch.nn.Linear
 
 
 class Linear(Module):
-    """a Linear layer, compute the transformation of a batched input.
-
-    Args:
-        d_in (int): The size of the input dimension
-        d_out (int): The size of the output dimension"""
+    """
+    a Linear layer, compute the transformation of a batched input.
+    """
 
     def __init__(
         self,
         d_in: int,
         d_out: int,
     ):
+        """
+        Args:
+            d_in (int): The size of the input dimension
+            d_out (int): The size of the output dimension
+        """
         super().__init__()
 
         self.d_in = d_in
@@ -130,3 +133,28 @@ class SwiGLU(Module):
         x: Float[Tensor, " ... d_model"],
     ) -> Float[Tensor, " ... d_model"]:
         return self.w2(silu(self.w1(x)) * self.w3(x))
+
+
+class RMSNorm(Module):
+    """RMSNorm"""
+
+    def __init__(
+        self,
+        d_model: int,
+        eps: float,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.eps = eps
+        self.weights = Parameter(trunc_normal(torch.empty(d_model), a=-3, b=3))
+
+    def forward(self, x: Float[Tensor, " ... d_model"]) -> Float[Tensor, " ... d_model"]:
+        """
+        Args:
+            x (Float[Tensor, "... d_model"]): Input features to run RMSNorm on. Can have arbitrary leading
+                dimensions.
+        Returns:
+            Float[Tensor,"... d_model"]: Tensor of with the same shape as `x` with the output of running
+            RMSNorm of the `x`.
+        """
+        return x * self.weights / torch.sqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
