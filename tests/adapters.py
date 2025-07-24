@@ -23,6 +23,7 @@ from modules.attention import CausalMultiHeadSelfAttention
 from modules.transformer_block import TransformerBlock
 from modules.transformer_lm import TransformerLM
 from modules.loss import cross_entropy
+from optimizer.adamw import AdamW
 
 
 
@@ -590,7 +591,7 @@ def get_adamw_cls() -> type[torch.optim.Optimizer]:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
