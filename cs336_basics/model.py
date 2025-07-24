@@ -89,3 +89,17 @@ class Embedding(Module):
             Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
         """
         return self.weights[token_ids]
+
+
+def silu(x: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
+    """Given a tensor of inputs, return the output of applying SiLU
+    to each element.
+
+    Args:
+        x(Float[Tensor, "..."]): Input features to run SiLU on. Shape is arbitrary.
+
+    Returns:
+        Float[Tensor,"..."]: of with the same shape as `x` with the output of applying
+        SiLU to each element.
+    """
+    return x / (1 + torch.exp(-x))
