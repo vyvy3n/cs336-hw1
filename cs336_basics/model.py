@@ -258,6 +258,8 @@ class RotaryPositionalEmbedding(Module):
 
         self.register_buffer("sin", torch.sin(angles), persistent=False)
         self.register_buffer("cos", torch.cos(angles), persistent=False)
+        self.register_buffer("sign", (-1) ** torch.arange(1, d_k + 1), persistent=False)
+        self.register_buffer("index", torch.arange(d_k).reshape(-1, 2).flip(1).flatten())
 
     def forward(
         self,
@@ -273,53 +275,66 @@ class RotaryPositionalEmbedding(Module):
         """
         cos = self.cos[token_positions].repeat_interleave(2, -1)
         sin = self.sin[token_positions].repeat_interleave(2, -1)
-        sin = sin * (-1) ** torch.arange(1, self.d_k + 1)
-        index = torch.arange(self.d_k).reshape(-1, 2).flip(1).flatten()
-        return cos * x + sin * x[..., index]
+        sin = sin * self.sign
+        return cos * x + sin * x[..., self.index]
 
 
-def run_multihead_self_attention_with_rope(
-    d_model: int,
-    num_heads: int,
-    max_seq_len: int,
-    theta: float,
-    q_proj_weight: Float[Tensor, " d_k d_in"],
-    k_proj_weight: Float[Tensor, " d_k d_in"],
-    v_proj_weight: Float[Tensor, " d_v d_in"],
-    o_proj_weight: Float[Tensor, " d_model d_v"],
-    in_features: Float[Tensor, " ... sequence_length d_in"],
-    token_positions: Int[Tensor, " ... sequence_length"] | None = None,
-) -> Float[Tensor, " ... sequence_length d_out"]:
-    """
-    Given the key, query, and value projection weights of a naive unbatched
-    implementation of multi-head attention, return the output of an optimized batched
-    implementation. This implementation should handle the key, query, and value projections
-    for all heads in a single matrix multiply.
-    This version of MHA should include RoPE.
-    In this case, the RoPE embedding dimension must be the head embedding dimension (d_model // num_heads).
-    See section 3.2.2 of Vaswani et al., 2017.
+class RoPEMultiheadAttention(Module):
+    """RotaryPositionalEmbedding MultiheadAttention"""
 
-    Args:
-        d_model (int): Dimensionality of the feedforward input and output.
-        num_heads (int): Number of heads to use in multi-headed attention.
-        max_seq_len (int): Maximum sequence length to pre-cache if your implementation does that.
-        theta (float): RoPE parameter.
-        q_proj_weight (Float[Tensor, "d_k d_in"]): Weights for the Q projection
-        k_proj_weight (Float[Tensor, "d_k d_in"]): Weights for the K projection
-        v_proj_weight (Float[Tensor, "d_k d_in"]): Weights for the V projection
-        o_proj_weight (Float[Tensor, "d_model d_v"]): Weights for the output projection
-        in_features (Float[Tensor, "... sequence_length d_in"]): Tensor to run your implementation on.
-        token_positions (Int[Tensor, " ... sequence_length"] | None): Optional tensor with the positions of the tokens
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        theta: float,
+        max_seq_len: int,
+    ):
+        """
+        Args:
+            d_model (int): Dimensionality of the feedforward input and output.
+            num_heads (int): Number of heads to use in multi-headed attention.
+            theta (float): RoPE parameter.
+            max_seq_len (int): Maximum sequence length to pre-cache.
+        """
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+        self.q_proj = Linear(d_model, d_model)
+        self.k_proj = Linear(d_model, d_model)
+        self.v_proj = Linear(d_model, d_model)
+        self.o_proj = Linear(d_model, d_model)
+        self.rope = RotaryPositionalEmbedding(self.d_k, theta, max_seq_len)
 
-    Returns:
-        Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
-        implementation with the given QKV projection weights and input features.
-    """
-    raise NotImplementedError
+    def forward(
+        self,
+        x: Float[Tensor, " ... sequence_length d_model"],
+        token_positions: Int[Tensor, " ... sequence_length"],
+    ) -> Float[Tensor, " ... sequence_length d_model"]:
+        """
+        Args:
+            x (Float[Tensor, "... sequence_length d_model"]): Input tensor to run RoPE on.
+            token_positions (Int[Tensor, "... sequence_length"]): Tensor of shape (batch_size, sequence_length) with the token positions
+        Returns:
+            Float[Tensor, " ... sequence_length d_model"]: Tensor with RoPEd input.
+        """
+        q = rearrange(self.q_proj(x), "... sequence_length (h d) -> ... h sequence_length d", h=self.num_heads)
+        ro_q = self.rope(q, token_positions)
+        k = rearrange(self.k_proj(x), "... sequence_length (h d) -> ... h sequence_length d", h=self.num_heads)
+        ro_k = self.rope(k, token_positions)
+        v = rearrange(self.v_proj(x), "... sequence_length (h d) -> ... h sequence_length d", h=self.num_heads)
+        shape = ro_q.shape[:-1]
+        shape = [*shape, shape[-1]]  # (..., h, sequence_length, sequence_length)
+        mask = torch.ones(shape, dtype=torch.bool, device=x.device)
+        mask.tril_()
+        a = scaled_dot_product_attention(ro_q, ro_k, v, mask)
+        a = rearrange(a, "... h sequence_length d -> ... sequence_length (h d)", h=self.num_heads)
+        o = self.o_proj(a)
+        return o
 
 
 if __name__ == "__main__":
-    rope = RotaryPositionalEmbedding(16, 10, 64)
-    x = torch.randn(5, 7, 16)
-    y = torch.arange(5 * 7).reshape(-1, 7)
-    print(rope(x, y).shape)
+    mla = RoPEMultiheadAttention(16, 4, 10, 64).cuda()
+    x = torch.randn(5, 7, 16).cuda()
+    y = torch.arange(5 * 7).reshape(-1, 7).cuda()
+    print(mla(x, y).shape)
