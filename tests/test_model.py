@@ -55,21 +55,21 @@ def test_swiglu(numpy_snapshot, ts_state_dict, in_embeddings, d_model, d_ff):
     numpy_snapshot.assert_match(actual_output, atol=1e-5)
 
 
-# def test_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):
-#     # torch.manual_seed(42)
-#     # Take the first batch item, so we test the 3D case
-#     # (input shape (batch_size, seq_len, d_k)) for scaled dot-product attention.
-#     # K = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_K.pt")[0]
-#     # Q = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_Q.pt")[0]
-#     # V = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_V.pt")[0]
-#     # mask = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_mask.pt")
-#     # expected_output = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_expected_output.pt")[0]
-#     actual_output = run_scaled_dot_product_attention(Q=q, K=k, V=v, mask=mask)
-#     # numpy.testing.assert_allclose(actual_output.detach().numpy(), expected_output.detach().numpy(), atol=1e-6)
-#     numpy_snapshot.assert_match(
-#         actual_output,
-#         atol=1e-6,
-#     )
+def test_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):
+    # torch.manual_seed(42)
+    # Take the first batch item, so we test the 3D case
+    # (input shape (batch_size, seq_len, d_k)) for scaled dot-product attention.
+    # K = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_K.pt")[0]
+    # Q = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_Q.pt")[0]
+    # V = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_V.pt")[0]
+    # mask = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_mask.pt")
+    # expected_output = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_expected_output.pt")[0]
+    actual_output = run_scaled_dot_product_attention(Q=q, K=k, V=v, mask=mask)
+    # numpy.testing.assert_allclose(actual_output.detach().numpy(), expected_output.detach().numpy(), atol=1e-6)
+    numpy_snapshot.assert_match(
+        actual_output,
+        atol=1e-6,
+    )
 
 
 # def test_4d_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):

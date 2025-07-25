@@ -4,6 +4,7 @@ from torch import Tensor
 from torch.nn import Module, Parameter
 from numpy import sqrt
 from einops import einsum
+from cs336_basics.nn_utils import softmax
 
 
 @torch.no_grad()
@@ -158,3 +159,28 @@ class RMSNorm(Module):
             RMSNorm of the `x`.
         """
         return x * self.weights / torch.sqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+
+def scaled_dot_product_attention(
+    Q: Float[Tensor, " ... queries d_k"],
+    K: Float[Tensor, " ... keys d_k"],
+    V: Float[Tensor, " ... values d_v"],
+    mask: Float[Tensor, " ... queries keys"] | None = None,
+) -> Float[Tensor, " ... queries d_v"]:
+    """
+    Given key (K), query (Q), and value (V) tensors, return
+    the output of scaled dot product attention.
+
+    Args:
+        Q (Float[Tensor, " ... queries d_k"]): Query tensor
+        K (Float[Tensor, " ... keys d_k"]): Key tensor
+        V (Float[Tensor, " ... keys d_v"]): Values tensor
+        mask (Float[Tensor, " ... queries keys"] | None): Mask tensor
+    Returns:
+        Float[Tensor, " ... queries d_v"]: Output of SDPA
+    """
+    d_k = Q.size(-1)
+    QK = einsum(Q, K, "... queries d_k, ... keys d_k -> ... queries keys") / sqrt(d_k)
+    QK[~mask] = -torch.inf
+    S = softmax(QK, dim=-1)
+    return einsum(S, V, "... queries keys, ... keys d_k -> ... queries d_k")
