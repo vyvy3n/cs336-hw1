@@ -72,36 +72,36 @@ def test_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):
     )
 
 
-# def test_4d_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):
-#     # Shape: (batch_size, num_heads, seq_len, d_k)
-#     q, k, v = (rearrange(x, "(batch head) seq d -> batch head seq d", head=2) for x in (q, k, v))
-#     mask = rearrange(mask, "(batch head) query key -> batch head query key", head=2)
+def test_4d_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):
+    # Shape: (batch_size, num_heads, seq_len, d_k)
+    q, k, v = (rearrange(x, "(batch head) seq d -> batch head seq d", head=2) for x in (q, k, v))
+    mask = rearrange(mask, "(batch head) query key -> batch head query key", head=2)
 
-#     actual_output = run_scaled_dot_product_attention(Q=q, K=k, V=v, mask=mask)
-#     numpy_snapshot.assert_match(
-#         actual_output,
-#         atol=1e-6,
-#     )
+    actual_output = run_scaled_dot_product_attention(Q=q, K=k, V=v, mask=mask)
+    numpy_snapshot.assert_match(
+        actual_output,
+        atol=1e-6,
+    )
 
 
-# def test_multihead_self_attention(numpy_snapshot, in_embeddings, d_model, n_heads, ts_state_dict):
-#     d, _ = ts_state_dict
-#     q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight = [
-#         d[f"layers.0.attn.{k}_proj.weight"] for k in ["q", "k", "v", "output"]
-#     ]
-#     # reference_weights = torch.load(FIXTURES_PATH / "unbatched_multihead_self_attention_weights.pt")
-#     # expected_output = torch.load(FIXTURES_PATH / "unbatched_multihead_self_attention_expected_output.pt")
-#     actual_output = run_multihead_self_attention(
-#         d_model=d_model,
-#         num_heads=n_heads,
-#         q_proj_weight=q_proj_weight,
-#         k_proj_weight=k_proj_weight,
-#         v_proj_weight=v_proj_weight,
-#         o_proj_weight=o_proj_weight,
-#         in_features=in_embeddings,
-#     )
-#     # numpy.testing.assert_allclose(actual_output.detach().numpy(), expected_output.detach().numpy(), atol=1e-6)
-#     numpy_snapshot.assert_match(actual_output, atol=1e-6)
+def test_multihead_self_attention(numpy_snapshot, in_embeddings, d_model, n_heads, ts_state_dict):
+    d, _ = ts_state_dict
+    q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight = [
+        d[f"layers.0.attn.{k}_proj.weight"] for k in ["q", "k", "v", "output"]
+    ]
+    # reference_weights = torch.load(FIXTURES_PATH / "unbatched_multihead_self_attention_weights.pt")
+    # expected_output = torch.load(FIXTURES_PATH / "unbatched_multihead_self_attention_expected_output.pt")
+    actual_output = run_multihead_self_attention(
+        d_model=d_model,
+        num_heads=n_heads,
+        q_proj_weight=q_proj_weight,
+        k_proj_weight=k_proj_weight,
+        v_proj_weight=v_proj_weight,
+        o_proj_weight=o_proj_weight,
+        in_features=in_embeddings,
+    )
+    # numpy.testing.assert_allclose(actual_output.detach().numpy(), expected_output.detach().numpy(), atol=1e-6)
+    numpy_snapshot.assert_match(actual_output, atol=1e-6)
 
 
 # def test_multihead_self_attention_with_rope(

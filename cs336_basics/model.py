@@ -3,7 +3,7 @@ from jaxtyping import Float, Int
 from torch import Tensor
 from torch.nn import Module, Parameter
 from numpy import sqrt
-from einops import einsum
+from einops import einsum, rearrange
 from cs336_basics.nn_utils import softmax
 
 
@@ -144,6 +144,11 @@ class RMSNorm(Module):
         d_model: int,
         eps: float,
     ):
+        """
+        Args:
+            d_model (int): The dimensionality of the RMSNorm input.
+            eps: (float): A value added to the denominator for numerical stability.
+        """
         super().__init__()
         self.d_model = d_model
         self.eps = eps
@@ -184,3 +189,45 @@ def scaled_dot_product_attention(
     QK[~mask] = -torch.inf
     S = softmax(QK, dim=-1)
     return einsum(S, V, "... queries keys, ... keys d_k -> ... queries d_k")
+
+
+class MultiheadAttention(Module):
+    """MultiheadAttention"""
+
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+    ):
+        """
+        Args:
+            d_model (int): Dimensionality of the feedforward input and output.
+            num_heads (int): Number of heads to use in multi-headed attention.
+        """
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.q_proj = Linear(d_model, d_model)
+        self.k_proj = Linear(d_model, d_model)
+        self.v_proj = Linear(d_model, d_model)
+        self.o_proj = Linear(d_model, d_model)
+
+    def forward(self, x: Float[Tensor, " ... sequence_length d_model"]):
+        """
+        Args:
+            in_features (Float[Tensor, "... sequence_length d_model"]): Tensor to run your implementation on.
+
+        Returns:
+            Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of batched multi-headed attention.
+        """
+        q = rearrange(self.q_proj(x), "... sequence_length (h d) -> ... h sequence_length d", h=self.num_heads)
+        k = rearrange(self.k_proj(x), "... sequence_length (h d) -> ... h sequence_length d", h=self.num_heads)
+        v = rearrange(self.v_proj(x), "... sequence_length (h d) -> ... h sequence_length d", h=self.num_heads)
+        shape = q.shape[:-1]
+        shape = [*shape, shape[-1]]
+        mask = torch.ones(shape, dtype=torch.bool, device=x.device)
+        mask.tril_()
+        a = scaled_dot_product_attention(q, k, v, mask)
+        a = rearrange(a, "... h sequence_length d -> ... sequence_length (h d)", h=self.num_heads)
+        o = self.o_proj(a)
+        return o
