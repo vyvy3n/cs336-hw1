@@ -177,25 +177,25 @@ def test_multihead_self_attention_with_rope(
 #     )
 
 
-# def test_transformer_block(numpy_snapshot, ts_state_dict, in_embeddings, d_model, n_heads, d_ff, n_keys, theta):
-#     # reference_weights = torch.load(FIXTURES_PATH / "transformer_block_weights.pt")
-#     # in_features = torch.load(FIXTURES_PATH / "in_features.pt")
+def test_transformer_block(numpy_snapshot, ts_state_dict, in_embeddings, d_model, n_heads, d_ff, n_keys, theta):
+    # reference_weights = torch.load(FIXTURES_PATH / "transformer_block_weights.pt")
+    # in_features = torch.load(FIXTURES_PATH / "in_features.pt")
 
-#     block_weights = {k.replace("layers.0.", ""): v for k, v in ts_state_dict[0].items() if "layers.0." in k}
+    block_weights = {k.replace("layers.0.", ""): v for k, v in ts_state_dict[0].items() if "layers.0." in k}
 
-#     actual_output = run_transformer_block(
-#         d_model=d_model,
-#         num_heads=n_heads,
-#         d_ff=d_ff,
-#         max_seq_len=n_keys,
-#         theta=theta,
-#         weights=block_weights,
-#         in_features=in_embeddings,
-#     )
-#     numpy_snapshot.assert_match(
-#         actual_output,
-#         atol=1e-6,
-#     )
+    actual_output = run_transformer_block(
+        d_model=d_model,
+        num_heads=n_heads,
+        d_ff=d_ff,
+        max_seq_len=n_keys,
+        theta=theta,
+        weights=block_weights,
+        in_features=in_embeddings,
+    )
+    numpy_snapshot.assert_match(
+        actual_output,
+        atol=1e-6,
+    )
 
 
 def test_rmsnorm(numpy_snapshot, ts_state_dict, in_embeddings):

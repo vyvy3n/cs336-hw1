@@ -53,7 +53,7 @@ class Linear(Module):
         self.d_in = d_in
         self.d_out = d_out
 
-        self.weights = Parameter(trunc_normal(torch.empty(d_out, d_in), std=1 / sqrt(d_in), a=-3, b=3))
+        self.weight = Parameter(trunc_normal(torch.empty(d_out, d_in), std=1 / sqrt(d_in)))
 
     def forward(self, in_features: Float[Tensor, " ... d_in"]) -> Float[Tensor, " ... d_out"]:
         """
@@ -63,7 +63,7 @@ class Linear(Module):
         Returns:
             Float[Tensor, "... d_out"]: The transformed output of your linear module.
         """
-        return einsum(in_features, self.weights, "... d_in, d_out d_in -> ... d_out")
+        return einsum(in_features, self.weight, "... d_in, d_out d_in -> ... d_out")
 
 
 class Embedding(Module):
@@ -82,7 +82,7 @@ class Embedding(Module):
         super().__init__()
         self.vocab_size = vocab_size
         self.d_model = d_model
-        self.weights = Parameter(trunc_normal(torch.empty(vocab_size, d_model), a=-3, b=3))
+        self.weight = Parameter(trunc_normal(torch.empty(vocab_size, d_model)))
 
     def forward(self, token_ids: Int[Tensor, " ..."]) -> Float[Tensor, " ... d_model"]:
         """
@@ -92,7 +92,7 @@ class Embedding(Module):
         Returns:
             Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
         """
-        return self.weights[token_ids]
+        return self.weight[token_ids]
 
 
 def silu(x: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
@@ -142,7 +142,7 @@ class RMSNorm(Module):
     def __init__(
         self,
         d_model: int,
-        eps: float,
+        eps: float = 1e-5,
     ):
         """
         Args:
@@ -152,7 +152,7 @@ class RMSNorm(Module):
         super().__init__()
         self.d_model = d_model
         self.eps = eps
-        self.weights = Parameter(trunc_normal(torch.empty(d_model), a=-3, b=3))
+        self.weight = Parameter(trunc_normal(torch.empty(d_model)))
 
     def forward(self, x: Float[Tensor, " ... d_model"]) -> Float[Tensor, " ... d_model"]:
         """
@@ -163,7 +163,7 @@ class RMSNorm(Module):
             Float[Tensor,"... d_model"]: Tensor of with the same shape as `x` with the output of running
             RMSNorm of the `x`.
         """
-        return x * self.weights / torch.sqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        return x * self.weight / torch.sqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
 
 def scaled_dot_product_attention(
@@ -210,7 +210,7 @@ class MultiheadAttention(Module):
         self.q_proj = Linear(d_model, d_model)
         self.k_proj = Linear(d_model, d_model)
         self.v_proj = Linear(d_model, d_model)
-        self.o_proj = Linear(d_model, d_model)
+        self.output_proj = Linear(d_model, d_model)
 
     def forward(self, x: Float[Tensor, " ... sequence_length d_model"]):
         """
@@ -229,7 +229,7 @@ class MultiheadAttention(Module):
         mask.tril_()
         a = scaled_dot_product_attention(q, k, v, mask)
         a = rearrange(a, "... h sequence_length d -> ... sequence_length (h d)", h=self.num_heads)
-        o = self.o_proj(a)
+        o = self.output_proj(a)
         return o
 
 
@@ -259,7 +259,7 @@ class RotaryPositionalEmbedding(Module):
         self.register_buffer("sin", torch.sin(angles), persistent=False)
         self.register_buffer("cos", torch.cos(angles), persistent=False)
         self.register_buffer("sign", (-1) ** torch.arange(1, d_k + 1), persistent=False)
-        self.register_buffer("index", torch.arange(d_k).reshape(-1, 2).flip(1).flatten())
+        self.register_buffer("index", torch.arange(d_k).reshape(-1, 2).flip(1).flatten(), persistent=False)
 
     def forward(
         self,
@@ -303,7 +303,7 @@ class RoPEMultiheadAttention(Module):
         self.q_proj = Linear(d_model, d_model)
         self.k_proj = Linear(d_model, d_model)
         self.v_proj = Linear(d_model, d_model)
-        self.o_proj = Linear(d_model, d_model)
+        self.output_proj = Linear(d_model, d_model)
         self.rope = RotaryPositionalEmbedding(self.d_k, theta, max_seq_len)
 
     def forward(
@@ -329,12 +329,32 @@ class RoPEMultiheadAttention(Module):
         mask.tril_()
         a = scaled_dot_product_attention(ro_q, ro_k, v, mask)
         a = rearrange(a, "... h sequence_length d -> ... sequence_length (h d)", h=self.num_heads)
-        o = self.o_proj(a)
+        o = self.output_proj(a)
         return o
 
 
-if __name__ == "__main__":
-    mla = RoPEMultiheadAttention(16, 4, 10, 64).cuda()
-    x = torch.randn(5, 7, 16).cuda()
-    y = torch.arange(5 * 7).reshape(-1, 7).cuda()
-    print(mla(x, y).shape)
+class TransformerDecoderLayer(Module):
+    """TransformerDecoderLayer with RoPE"""
+
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, max_seq_len: int, theta: float):
+        """
+        Args:
+            d_model (int): The dimensionality of the Transformer block input.
+            num_heads (int): Number of heads to use in multi-headed attention. `d_model` must be
+                evenly divisible by `num_heads`.
+            d_ff (int): Dimensionality of the feed-forward inner layer.
+            max_seq_len (int): Maximum sequence length to pre-cache if your implementation does that.
+            theta (float): RoPE parameter.
+        """
+        super().__init__()
+        self.attn = RoPEMultiheadAttention(d_model, num_heads, theta, max_seq_len)
+        self.ffn = SwiGLU(d_model, d_ff)
+        self.ln1 = RMSNorm(d_model)
+        self.ln2 = RMSNorm(d_model)
+
+    def forward(self, x: Float[Tensor, " batch sequence_length d_model"]):
+        pos_ids = torch.arange(x.size(-2), device=x.device)
+        residual_1 = self.attn(self.ln1(x), pos_ids)
+        features = x + residual_1
+        residual_2 = self.ffn(self.ln2(features))
+        return residual_2 + features

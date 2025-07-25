@@ -35,7 +35,7 @@ def run_linear(
     """
 
     linear = model.Linear(d_in, d_out)
-    linear.weights.data = weights
+    linear.weight.data = weights
     return linear(in_features)
 
 
@@ -59,7 +59,7 @@ def run_embedding(
     """
 
     embedding = model.Embedding(vocab_size=vocab_size, d_model=d_model)
-    embedding.weights.data = weights
+    embedding.weight.data = weights
     return embedding(token_ids)
 
 
@@ -86,7 +86,7 @@ def run_swiglu(
         Float[Tensor, "... d_model"]: Output embeddings of the same shape as the input embeddings.
     """
     swiglu = model.SwiGLU(d_model, d_ff)
-    swiglu.load_state_dict({f"w{i}.weights": w for i, w in enumerate([w1_weight, w2_weight, w3_weight], start=1)})
+    swiglu.load_state_dict({f"w{i}.weight": w for i, w in enumerate([w1_weight, w2_weight, w3_weight], start=1)})
     return swiglu(in_features)
 
 
@@ -143,10 +143,10 @@ def run_multihead_self_attention(
         implementation with the given QKV projection weights and input features.
     """
     mla = model.MultiheadAttention(d_model, num_heads)
-    mla.q_proj.weights.data = q_proj_weight
-    mla.k_proj.weights.data = k_proj_weight
-    mla.v_proj.weights.data = v_proj_weight
-    mla.o_proj.weights.data = o_proj_weight
+    mla.q_proj.weight.data = q_proj_weight
+    mla.k_proj.weight.data = k_proj_weight
+    mla.v_proj.weight.data = v_proj_weight
+    mla.output_proj.weight.data = o_proj_weight
     return mla(in_features)
 
 
@@ -188,10 +188,10 @@ def run_multihead_self_attention_with_rope(
         implementation with the given QKV projection weights and input features.
     """
     ro_mla = model.RoPEMultiheadAttention(d_model, num_heads, theta, max_seq_len)
-    ro_mla.q_proj.weights.data = q_proj_weight
-    ro_mla.k_proj.weights.data = k_proj_weight
-    ro_mla.v_proj.weights.data = v_proj_weight
-    ro_mla.o_proj.weights.data = o_proj_weight
+    ro_mla.q_proj.weight.data = q_proj_weight
+    ro_mla.k_proj.weight.data = k_proj_weight
+    ro_mla.v_proj.weight.data = v_proj_weight
+    ro_mla.output_proj.weight.data = o_proj_weight
     return ro_mla(in_features, token_positions)
 
 
@@ -288,7 +288,9 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    block = model.TransformerDecoderLayer(d_model, num_heads, d_ff, max_seq_len, theta)
+    block.load_state_dict(weights)
+    return block(in_features)
 
 
 def run_transformer_lm(
@@ -394,7 +396,7 @@ def run_rmsnorm(
         RMSNorm of the `in_features`.
     """
     rmsnorm = model.RMSNorm(d_model, eps)
-    rmsnorm.weights.data = weights
+    rmsnorm.weight.data = weights
     return rmsnorm(in_features)
 
 
