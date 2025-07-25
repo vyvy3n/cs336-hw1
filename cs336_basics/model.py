@@ -73,7 +73,7 @@ class Embedding(Module):
         self,
         vocab_size: int,
         d_model: int,
-    ) -> Float[Tensor, " ... d_model"]:
+    ):
         """
         Args:
             vocab_size (int): The number of embeddings in the vocabulary
@@ -224,10 +224,62 @@ class MultiheadAttention(Module):
         k = rearrange(self.k_proj(x), "... sequence_length (h d) -> ... h sequence_length d", h=self.num_heads)
         v = rearrange(self.v_proj(x), "... sequence_length (h d) -> ... h sequence_length d", h=self.num_heads)
         shape = q.shape[:-1]
-        shape = [*shape, shape[-1]]
+        shape = [*shape, shape[-1]]  # (..., h, sequence_length, sequence_length)
         mask = torch.ones(shape, dtype=torch.bool, device=x.device)
         mask.tril_()
         a = scaled_dot_product_attention(q, k, v, mask)
         a = rearrange(a, "... h sequence_length d -> ... sequence_length (h d)", h=self.num_heads)
         o = self.o_proj(a)
         return o
+
+
+class RotaryPositionalEmbedding(Module):
+    """RotaryPositionalEmbedding"""
+
+    def __init__(
+        self,
+        d_k: int,
+        theta: float,
+        max_seq_len: int,
+    ):
+        """
+        Args:
+            d_k (int): Embedding dimension size for the query or key tensor.
+            theta (float): RoPE parameter.
+            max_seq_len (int): Maximum sequence length to pre-cache.
+        """
+        super().__init__()
+        self.d_k = d_k
+        self.theta = theta
+        power = -2 * torch.arange(d_k // 2, dtype=torch.float32) / d_k
+        inv_freq = theta ** power.unsqueeze(0)
+        positions = torch.arange(max_seq_len, dtype=torch.float32).unsqueeze(1)
+        angles = positions * inv_freq
+
+        self.register_buffer("sin", torch.sin(angles), persistent=False)
+        self.register_buffer("cos", torch.cos(angles), persistent=False)
+        self.register_buffer("indexes", torch.arange(d_k).reshape(-1, 2).flip(1).flatten(), persistent=False)
+
+    def forward(
+        self,
+        x: Float[Tensor, " ... sequence_length d_k"],
+        token_positions: Int[Tensor, " ... sequence_length"],
+    ) -> Float[Tensor, " ... sequence_length d_k"]:
+        """
+        Args:
+            x (Float[Tensor, "... sequence_length d_k"]): Input tensor to run RoPE on.
+            token_positions (Int[Tensor, "... sequence_length"]): Tensor of shape (batch_size, sequence_length) with the token positions
+        Returns:
+            Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
+        """
+        cos = self.cos[token_positions].repeat_interleave(2, -1)
+        sin = self.sin[token_positions].repeat_interleave(2, -1)
+        sin = sin * (-1) ** torch.arange(1, self.d_k + 1)
+        return cos * x + sin * x[..., self.indexes]
+
+
+if __name__ == "__main__":
+    rope = RotaryPositionalEmbedding(16, 10, 64)
+    x = torch.randn(5, 7, 16)
+    y = torch.arange(5 * 7).reshape(-1, 7)
+    print(rope(x, y).shape)
