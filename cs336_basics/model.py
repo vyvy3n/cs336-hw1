@@ -1,7 +1,7 @@
 import torch
 from jaxtyping import Float, Int
 from torch import Tensor
-from torch.nn import Module, Parameter
+from torch.nn import Module, Parameter, ModuleList
 from numpy import sqrt
 from einops import einsum, rearrange
 from cs336_basics.nn_utils import softmax
@@ -352,9 +352,67 @@ class TransformerDecoderLayer(Module):
         self.ln1 = RMSNorm(d_model)
         self.ln2 = RMSNorm(d_model)
 
-    def forward(self, x: Float[Tensor, " batch sequence_length d_model"]):
-        pos_ids = torch.arange(x.size(-2), device=x.device)
+    def forward(
+        self,
+        x: Float[Tensor, " batch sequence_length d_model"],
+        pos_ids: Int[Tensor, " ... sequence_length"] | None = None,
+    ):
+        if pos_ids is None:
+            pos_ids = torch.arange(x.size(-2), device=x.device)
         residual_1 = self.attn(self.ln1(x), pos_ids)
         features = x + residual_1
         residual_2 = self.ffn(self.ln2(features))
         return residual_2 + features
+
+
+class TransformerDecoder(Module):
+    """TransformerDecoder"""
+
+    def __init__(
+        self,
+        vocab_size: int,
+        context_length: int,
+        d_model: int,
+        num_layers: int,
+        num_heads: int,
+        d_ff: int,
+        rope_theta: float,
+    ):
+        """
+        Args:
+            vocab_size (int): The number of unique items in the output vocabulary to be predicted.
+            context_length (int): The maximum number of tokens to process at once.
+            d_model (int): The dimensionality of the model embeddings and sublayer outputs.
+            num_layers (int): The number of Transformer layers to use.
+            num_heads (int): Number of heads to use in multi-headed attention. `d_model` must be
+                evenly divisible by `num_heads`.
+            d_ff (int): Dimensionality of the feed-forward inner layer (section 3.3).
+            rope_theta (float): The RoPE $\Theta$ parameter.
+        """
+        super().__init__()
+        self.token_embeddings = Embedding(vocab_size, d_model)
+        self.layers = ModuleList(
+            [TransformerDecoderLayer(d_model, num_heads, d_ff, context_length, rope_theta) for _ in range(num_layers)]
+        )
+        self.ln_final = RMSNorm(d_model)
+        self.lm_head = Linear(d_model, vocab_size)
+
+    def forward(
+        self,
+        in_indices: Int[Tensor, " batch_size sequence_length"],
+    ) -> Float[Tensor, " batch_size sequence_length vocab_size"]:
+        """
+        Args:
+            in_indices (Int[Tensor, "batch_size sequence_length"]) Tensor with input indices to run the language model on.
+            Shape is (batch_size, sequence_length), where `sequence_length` is at most `context_length`.
+
+        Returns:
+            Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
+            next-word distribution for each token.
+        """
+
+        h = self.token_embeddings(in_indices)
+        for layer in self.layers:
+            h = layer(h)
+        h = self.ln_final(h)
+        return self.lm_head(h)
