@@ -10,6 +10,7 @@ import torch
 from torch import Tensor
 
 from cs336_basics import model
+from cs336_basics.utils import get_batch
 from cs336_basics.tokenizer import BPETokenizer
 from cs336_basics.train_bpe_tokenizer import train_bpe
 from cs336_basics.optimizer import AdamW, CosineScheduler
@@ -439,7 +440,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return get_batch(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
