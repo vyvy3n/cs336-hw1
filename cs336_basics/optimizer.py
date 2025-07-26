@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 import torch
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler, _warn_get_lr_called_within_step
 from torch.nn import Parameter
 import numpy as np
 
@@ -49,3 +50,27 @@ class AdamW(Optimizer):
 
                 if group["weight_decay"] > 0.0:
                     p.data.add_(p.data, alpha=-group["lr"] * group["weight_decay"])
+
+
+class CosineScheduler(LRScheduler):
+    """CosineScheduler"""
+
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        max_learning_rate: float,
+        min_learning_rate: float,
+        warmup_iters: int,
+        cosine_cycle_iters: int,
+        last_epoch=-1,
+        verbose="deprecated",
+    ):
+        super().__init__(optimizer, last_epoch, verbose)
+        self.max_learning_rate = max_learning_rate
+        self.min_learning_rate = min_learning_rate
+        self.warmup_iters = warmup_iters
+        self.cosine_cycle_iters = cosine_cycle_iters
+
+    def get_lr(self) -> list[float]:
+        """Compute learning rate using chainable form of the scheduler."""
+        _warn_get_lr_called_within_step(self)
