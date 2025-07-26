@@ -9,10 +9,11 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 
+from cs336_basics import model
+from cs336_basics.optimizer import AdamW
 from cs336_basics.tokenizer import BPETokenizer
 from cs336_basics.train_bpe_tokenizer import train_bpe
 from cs336_basics.nn_utils import softmax, cross_entropy, gradient_clipping
-from cs336_basics import model
 
 
 def run_linear(
@@ -491,7 +492,7 @@ def get_adamw_cls() -> type[torch.optim.Optimizer]:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
