@@ -58,19 +58,29 @@ class CosineScheduler(LRScheduler):
     def __init__(
         self,
         optimizer: Optimizer,
-        max_learning_rate: float,
         min_learning_rate: float,
         warmup_iters: int,
         cosine_cycle_iters: int,
         last_epoch=-1,
         verbose="deprecated",
     ):
+        self.min_lr = min_learning_rate
+        self.iter_warm = warmup_iters
+        self.iter_cyc = cosine_cycle_iters
         super().__init__(optimizer, last_epoch, verbose)
-        self.max_learning_rate = max_learning_rate
-        self.min_learning_rate = min_learning_rate
-        self.warmup_iters = warmup_iters
-        self.cosine_cycle_iters = cosine_cycle_iters
 
     def get_lr(self) -> list[float]:
-        """Compute learning rate using chainable form of the scheduler."""
+        """Compute learning rate of the scheduler."""
         _warn_get_lr_called_within_step(self)
+        return self._get_closed_form_lr()
+
+    def _get_closed_form_lr(self) -> list[float]:
+        return [self.get_lr_cosine_schedule(self.last_epoch, lr_m) for lr_m in self.base_lrs]
+
+    def get_lr_cosine_schedule(self, t: int, max_lr: float) -> float:
+        if t < self.iter_warm:
+            return t * max_lr / self.iter_warm
+        elif self.iter_warm <= t <= self.iter_cyc:
+            phase = np.pi * (t - self.iter_warm) / (self.iter_cyc - self.iter_warm)
+            return self.min_lr + 0.5 * (1 + np.cos(phase)) * (max_lr - self.min_lr)
+        return self.min_lr
