@@ -2,6 +2,7 @@ from collections.abc import Iterable
 import torch
 from torch.optim import Optimizer
 from torch.nn import Parameter
+import numpy as np
 
 
 class AdamW(Optimizer):
@@ -40,9 +41,11 @@ class AdamW(Optimizer):
                 v = state["v"]
                 v.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
 
-                denom = v.div(1 - beta2 ** state["t"]).sqrt_().add_(group["eps"])
+                denom = v.sqrt().add_(group["eps"])
 
-                p.data.addcdiv_(m.div(1 - beta1 ** state["t"]), denom, value=-group["lr"])
+                alpha_t = np.sqrt(1 - beta2 ** state["t"]) / (1 - beta1 ** state["t"])
+
+                p.data.addcdiv_(m, denom, value=-group["lr"] * alpha_t)
 
                 if group["weight_decay"] > 0.0:
                     p.data.add_(p.data, alpha=-group["lr"] * group["weight_decay"])
