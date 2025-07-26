@@ -26,7 +26,7 @@ from modules.loss import cross_entropy
 from optimizer.adamw import AdamW
 from optimizer.cosine_schedule import get_lr_cosine_schedule
 from optimizer.gradient_clipping import gradient_clipping
-
+from trainer.data_loading import get_batch
 
 
 def detect_device() -> str:
@@ -352,10 +352,18 @@ def run_transformer_block(
         theta=theta,
         device=device,
     )
-    transformer_block.multihead_self_attention.Q.weight.data = weights["attn.q_proj.weight"].to(device)
-    transformer_block.multihead_self_attention.K.weight.data = weights["attn.k_proj.weight"].to(device)
-    transformer_block.multihead_self_attention.V.weight.data = weights["attn.v_proj.weight"].to(device)
-    transformer_block.multihead_self_attention.O.weight.data = weights["attn.output_proj.weight"].to(device)
+    transformer_block.multihead_self_attention.Q.weight.data = weights[
+        "attn.q_proj.weight"
+    ].to(device)
+    transformer_block.multihead_self_attention.K.weight.data = weights[
+        "attn.k_proj.weight"
+    ].to(device)
+    transformer_block.multihead_self_attention.V.weight.data = weights[
+        "attn.v_proj.weight"
+    ].to(device)
+    transformer_block.multihead_self_attention.O.weight.data = weights[
+        "attn.output_proj.weight"
+    ].to(device)
     transformer_block.rms_norm_1.gain.data = weights["ln1.weight"].to(device)
     transformer_block.rms_norm_2.gain.data = weights["ln2.weight"].to(device)
     transformer_block.swiglu.w1.weight.data = weights["ffn.w1.weight"].to(device)
@@ -446,7 +454,7 @@ def run_transformer_lm(
     """
     device = torch.device(detect_device())
     in_indices = in_indices.to(device)
-    
+
     # Create model
     model = TransformerLM(
         d_model=d_model,
@@ -466,10 +474,18 @@ def run_transformer_lm(
     for layer_idx in range(num_layers):
         block = model.transformer_layers[layer_idx]
         prefix = f"layers.{layer_idx}."
-        block.multihead_self_attention.Q.weight.data = weights[prefix + "attn.q_proj.weight"].to(device)
-        block.multihead_self_attention.K.weight.data = weights[prefix + "attn.k_proj.weight"].to(device)
-        block.multihead_self_attention.V.weight.data = weights[prefix + "attn.v_proj.weight"].to(device)
-        block.multihead_self_attention.O.weight.data = weights[prefix + "attn.output_proj.weight"].to(device)
+        block.multihead_self_attention.Q.weight.data = weights[
+            prefix + "attn.q_proj.weight"
+        ].to(device)
+        block.multihead_self_attention.K.weight.data = weights[
+            prefix + "attn.k_proj.weight"
+        ].to(device)
+        block.multihead_self_attention.V.weight.data = weights[
+            prefix + "attn.v_proj.weight"
+        ].to(device)
+        block.multihead_self_attention.O.weight.data = weights[
+            prefix + "attn.output_proj.weight"
+        ].to(device)
         block.rms_norm_1.gain.data = weights[prefix + "ln1.weight"].to(device)
         block.rms_norm_2.gain.data = weights[prefix + "ln2.weight"].to(device)
         block.swiglu.w1.weight.data = weights[prefix + "ffn.w1.weight"].to(device)
@@ -478,6 +494,7 @@ def run_transformer_lm(
 
     # Run model forward pass
     return model(in_indices)
+
 
 def run_rmsnorm(
     d_model: int,
@@ -538,7 +555,12 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return get_batch(
+        dataset=dataset,
+        batch_size=batch_size,
+        context_length=context_length,
+        device=device,
+    )
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -621,7 +643,9 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    return get_lr_cosine_schedule(it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
+    return get_lr_cosine_schedule(
+        it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters
+    )
 
 
 def run_save_checkpoint(
