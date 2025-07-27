@@ -15,8 +15,9 @@ class Tokenizer:
         special_tokens: list[str] | None = None
         """
         self.vocab = vocab
-        self.merges = merges
+        self.merges_dict = {t : i for i, t in enumerate(merges)}
 
+        special_tokens = special_tokens if special_tokens is not None else []
         for token in special_tokens:
             token_bytes = token.encode('utf-8')
             if token_bytes in self.vocab.values():
@@ -70,23 +71,43 @@ class Tokenizer:
                     raise ValueError(f"Unexpected type {type(elem)} in results.")
             results = new_results
         return results
+  
+
+    def merge_key(self, key: tuple[bytes], bytes_pair: tuple[bytes, bytes]) -> tuple[bytes]:
+        i = 0
+        L = len(key)
+        result = []
+        new_bytes = bytes_pair[0] + bytes_pair[1]
+        while i < L:
+            if i < L - 1 and key[i] == bytes_pair[0] and key[i + 1] == bytes_pair[1]:
+                result.append(new_bytes)
+                i += 2
+            else:
+                result.append(key[i])
+                i += 1
+        return tuple(result)
 
 
     def tokenize_word(self, word:str) -> list[int]:
-        word_bytes = word.encode('utf-8')
-        bytes_len = len(word_bytes)
-        i = 0
-        token_ids = []
-        while i < bytes_len:
-            current_bytes = bytes([word_bytes[i]])
-            j = i + 1
-            while j < bytes_len and current_bytes + bytes([word_bytes[j]]) in self.bytes_to_id:
-                current_bytes += bytes([word_bytes[j]])
-                j += 1
-            token_ids.append(self.bytes_to_id[current_bytes])
-            i = j
-        return token_ids
+        word_bytes = [bytes([x]) for x in word.encode('utf-8')]
         
+        while True:
+            merged = False
+            rank = len(self.merges_dict)
+            best_pair = None
+            for i in range(len(word_bytes) - 1):
+                pair = (word_bytes[i], word_bytes[i + 1])
+                if pair in self.merges_dict and self.merges_dict[pair] < rank:
+                    best_pair = pair
+                    rank = self.merges_dict[pair]
+                    merged = True
+            if merged:
+                word_bytes = self.merge_key(word_bytes, best_pair)
+            else:
+                break
+        token_ids = [self.bytes_to_id[byte] for byte in word_bytes]
+        return token_ids
+
 
     def tokenize_normal_text(self, text:bytes) -> list[int]:
         words = re.findall(PAT, text)
@@ -160,14 +181,4 @@ def test_encode():
 
 
 if __name__ == "__main__":
-    # test_encode()
-    text = "Hello, world! This is a test. <|endoftext|> Let's see how it works"
-    match = re.search(PAT, text, flags=re.REVERSE)
-    if match:
-        print(f"最后一个匹配值: {match.start()}, 位置: {match.end()}")
-    words = re.findall(PAT, text)
-    print(f"Words found: {words}")
-    total_len = 0
-    for word in words[:-1]:
-        total_len += len(word)
-    print(f"Total length of words: {total_len}")
+    test_encode()
