@@ -198,7 +198,7 @@ def run_train_bpe_on_tiny_stories():
     input_path = "./data/TinyStoriesV2-GPT4-train.txt"
     vocab, merges = train_bpe(
         input_path=input_path,
-        vocab_size=500,
+        vocab_size=10000,
         special_tokens=["<|endoftext|>"],
     )
     
@@ -210,6 +210,23 @@ def run_train_bpe_on_tiny_stories():
     return vocab, merges
 
 
+def run_train_bpe_on_owt():
+    start_time = time.time()
+    input_path = "./data/owt_train.txt"
+    vocab, merges = train_bpe(
+        input_path=input_path,
+        vocab_size=32000,
+        special_tokens=["<|endoftext|>"],
+    )
+    
+    # Write vocab and merges to files
+    write_vocab_to_file(vocab, "./data/owt-vocab.txt")
+    write_merges_to_file(merges, "./data/owt-merges.txt")
+    end_time = time.time()
+    print(f"Training BPE took {end_time - start_time:.2f} seconds")
+    return vocab, merges
+
+
 if __name__=="__main__":
     # test_read_write_vocab_merges()
-    run_train_bpe_on_tiny_stories()
+    run_train_bpe_on_owt()
