@@ -1,7 +1,7 @@
 from typing import Iterator, Iterable, Union
 from cs336_basics.common import write_vocab_to_file, read_vocab_from_file, write_merges_to_file, read_merges_from_file
 import regex as re
-from cs336_basics.bpe import PAT
+from cs336_basics.train_bpe import PAT
 
 
 class Tokenizer:
