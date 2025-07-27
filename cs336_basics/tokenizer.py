@@ -14,8 +14,8 @@ class Tokenizer:
         merges: list[tuple[bytes, bytes]]
         special_tokens: list[str] | None = None
         """
-        self.vocab = vocab
         self.merges_dict = {t : i for i, t in enumerate(merges)}
+        self.vocab = vocab
 
         special_tokens = special_tokens if special_tokens is not None else []
         for token in special_tokens:
@@ -26,13 +26,12 @@ class Tokenizer:
                 self.vocab[len(self.vocab)] = token_bytes
                 print(f"Added special token '{token}' to vocabulary with ID {len(self.vocab)-1}.")
         
-        self.bytes_to_id = {v: k for k, v in vocab.items()}
-        self.id_to_bytes = {k: v for k, v in vocab.items()}
+        self.bytes_to_id = {v: k for k, v in self.vocab.items()}
+        self.id_to_bytes = {k: v for k, v in self.vocab.items()}
 
         self.special_tokens_to_id = {}
-        for id, token in self.vocab.items():
-            if token.startswith(b"<|") and token.endswith(b"|>"):
-                self.special_tokens_to_id[token] = id
+        for token in sorted([token.encode('utf-8') for token in special_tokens], key=lambda x: len(x), reverse=True):
+            self.special_tokens_to_id[token] = self.bytes_to_id[token]
     
 
     @classmethod
