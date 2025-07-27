@@ -121,7 +121,7 @@ def train_bpe(input_path:str, vocab_size:int, special_tokens:list[str]) -> tuple
         
         for start, end in zip(boundaries[:-1], boundaries[1:]):
             f.seek(start)
-            chunk = f.read(end - start).decode("utf-8", errors="ignore").replace("\r\n", "\n")
+            chunk = f.read(end - start).decode("utf-8", errors="ignore")
             for sub_chunk in remove_special_tokens(chunk, special_tokens):
                 words = re.findall(PAT, sub_chunk)
                 for word in words:

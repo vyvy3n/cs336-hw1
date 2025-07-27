@@ -73,7 +73,7 @@ class Tokenizer:
 
 
     def tokenize_word(self, word:str) -> list[int]:
-        word_bytes = word.encode('utf-8').replace(b"\r\n", b"\n")
+        word_bytes = word.encode('utf-8')
         bytes_len = len(word_bytes)
         i = 0
         token_ids = []
