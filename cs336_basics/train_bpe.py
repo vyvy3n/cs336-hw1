@@ -4,6 +4,8 @@ import regex as re
 from collections import Counter
 from cs336_basics.common import write_vocab_to_file, read_vocab_from_file, write_merges_to_file, read_merges_from_file
 from tests.common import FIXTURES_PATH
+import time
+import multiprocessing as mp
 
 def find_chunk_boundaries(
     file: BinaryIO, 
@@ -104,30 +106,59 @@ def remove_special_tokens(chunk:str, special_tokens:list[str])->str:
     escaped = [re.escape(t) for t in special_tokens]
     return re.split("|".join(escaped), chunk)
 
+
+def preprocess_segment(params) -> dict[tuple[bytes, ...], int]:
+    """
+    Read a segment of the file and remove special tokens.
+    """
+    file_name = params['file_name']
+    start = params['start']
+    end = params['end']
+    special_tokens = params['special_tokens']
+    word_counts = {}
+    with open(file_name, "rb") as f:
+        f.seek(start)
+        chunk = f.read(end - start).decode("utf-8", errors="ignore")
+        for sub_chunk in remove_special_tokens(chunk, special_tokens):
+            words = re.findall(PAT, sub_chunk)
+            for word in words:
+                key = tuple([bytes([x]) for x in word.encode('utf-8')])
+                word_counts[key] = word_counts.get(key, 0) + 1
+    return word_counts
+
+
+def merge_word_counts(word_counts_list:list[dict[tuple[bytes, ...], int]]) -> dict[tuple[bytes, ...], int]:
+    """
+    Merge word counts from multiple segments.
+    """
+    merged_counts = {}
+    for word_counts in word_counts_list:
+        for key, count in word_counts.items():
+            merged_counts[key] = merged_counts.get(key, 0) + count
+    return merged_counts
+
+
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 def train_bpe(input_path:str, vocab_size:int, special_tokens:list[str]) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-    num_processes = 2
+    num_processes = mp.cpu_count()
+    print(f"Using {num_processes} processes for training BPE.")
     vocab = {}
     for token in special_tokens:
         vocab[len(vocab)] = token.encode('utf-8')
     for i in range(256):
         vocab[len(vocab)] = bytes([i])
 
-    
-    word_counts = {}
     with open(input_path, "rb") as f:
         boundaries = find_chunk_boundaries(
             f, num_processes, "<|endoftext|>".encode("utf-8"))
-        
-        for start, end in zip(boundaries[:-1], boundaries[1:]):
-            f.seek(start)
-            chunk = f.read(end - start).decode("utf-8", errors="ignore")
-            for sub_chunk in remove_special_tokens(chunk, special_tokens):
-                words = re.findall(PAT, sub_chunk)
-                for word in words:
-                    key = tuple([bytes([x]) for x in word.encode('utf-8')])
-                    word_counts[key] = word_counts.get(key, 0) + 1
-
+        print(f"Chunk boundaries: {boundaries}")
+    
+    with mp.Pool(processes=mp.cpu_count()) as pool:
+        tasks = [{'file_name': input_path, 'start': boundaries[i], 'end': boundaries[i+1], 'special_tokens': special_tokens} for i in range(len(boundaries)-1)]
+        word_counts_list = pool.map(preprocess_segment, tasks)
+    word_counts = merge_word_counts(word_counts_list)
+ 
+    print(f"Total unique words: {len(word_counts)}")    
     # merge until size of vocab reach vocab_size
     merged_tuples = []
     bytes_pair_counts = get_bytes_pair_counts(word_counts)
@@ -162,6 +193,23 @@ def test_read_write_vocab_merges():
     assert merges == merges2
 
 
+def run_train_bpe_on_tiny_stories():
+    start_time = time.time()
+    input_path = "./data/TinyStoriesV2-GPT4-train.txt"
+    vocab, merges = train_bpe(
+        input_path=input_path,
+        vocab_size=500,
+        special_tokens=["<|endoftext|>"],
+    )
+    
+    # Write vocab and merges to files
+    write_vocab_to_file(vocab, "./data/TinyStoriesV2-GPT4-vocab.txt")
+    write_merges_to_file(merges, "./data/TinyStoriesV2-GPT4-merges.txt")
+    end_time = time.time()
+    print(f"Training BPE took {end_time - start_time:.2f} seconds")
+    return vocab, merges
+
+
 if __name__=="__main__":
-    test_read_write_vocab_merges()
-    print("Training BPE completed successfully.")
+    # test_read_write_vocab_merges()
+    run_train_bpe_on_tiny_stories()
