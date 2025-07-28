@@ -70,23 +70,44 @@ def merge_key(key: tuple[bytes], bytes_pair: tuple[bytes, bytes], new_bytes: byt
     return tuple(result)
 
 
-def update_word_counts(word_counts: dict[tuple[bytes, ...], int], bytes_pair: tuple[bytes, bytes], bytes_pair_counts: Counter) -> None:
-    new_word_counts = {}
+def check_bytes_pair_in_word(bytes_pair: tuple[bytes, bytes], word: tuple[bytes]) -> bool:
+    i = 0
+    L = len(word)
+    while i < L - 1:
+        if bytes_pair[0] == word[i] and bytes_pair[1] == word[i + 1]:
+            return True
+        i += 1
+    return False
+
+
+def update_word_counts(word_counts: dict[tuple[bytes, ...], int], bytes_pair: tuple[bytes, bytes], bytes_pair_counts: Counter, 
+                       bytes_pair_to_words: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]]) -> None:
     new_bytes = bytes_pair[0] + bytes_pair[1]
+    bytes_pair_to_words[new_bytes] = []
+    # print("bytes pair:", bytes_pair)
+    # print(f"bytes pair count: ", bytes_pair_counts[bytes_pair])
 
-    for key, count in word_counts.items():
-        new_key = merge_key(key, bytes_pair, new_bytes)
-        if new_key != key:
-            for i in range(len(key) - 1):
-                pair = (key[i], key[i + 1])
-                bytes_pair_counts[pair] -= count
-            for i in range(len(new_key) - 1):
-                pair = (new_key[i], new_key[i + 1])
-                bytes_pair_counts[pair] += count
-        new_word_counts[new_key] = new_word_counts.get(new_key, 0) + count
-
-    word_counts.clear()
-    word_counts.update(new_word_counts)
+    old_word_list = bytes_pair_to_words[bytes_pair].copy()
+    for old_word in old_word_list:
+        new_word = merge_key(old_word, bytes_pair, new_bytes)
+        count = word_counts[old_word]
+        # update the bytes counts
+        for i in range(len(old_word) - 1):
+            pair = (old_word[i], old_word[i + 1])
+            bytes_pair_counts[pair] -= count
+            if pair in bytes_pair_to_words:
+                bytes_pair_to_words[pair].discard(old_word)
+        # iterate over all new pairs in the new word
+        for i in range(len(new_word) - 1):
+            pair = (new_word[i], new_word[i + 1])
+            bytes_pair_counts[pair] += count
+            if pair not in bytes_pair_to_words:
+                bytes_pair_to_words[pair] = set()
+            bytes_pair_to_words[pair].add(new_word)
+        # update the word counts
+        word_counts[new_word] = word_counts.pop(old_word)
+    # print(f"bytes pair count: ", bytes_pair_counts[bytes_pair])
+    # print("-"*80)
     
 
 def get_bytes_pair_counts(word_counts: dict[tuple[bytes, ...], int]
@@ -138,6 +159,26 @@ def merge_word_counts(word_counts_list:list[dict[tuple[bytes, ...], int]]) -> di
     return merged_counts
 
 
+def build_bytes_pair_to_words_dict(
+    bytes_pair_counts: dict[tuple[bytes, bytes], int],
+    words_counts: dict[tuple[bytes, ...], int],
+    vocab_size:int
+) -> dict[tuple[bytes, bytes], tuple[bytes, bytes]]:
+    """
+    Build a dictionary mapping byte pairs to their corresponding words.
+    """
+    sorted_bytes_pair_counts = sorted(bytes_pair_counts.items(), key = lambda x: (x[1], x[0]), reverse = True)
+    bytes_pair_to_words = {}
+    for i in range(min(len(sorted_bytes_pair_counts), vocab_size)):
+        bytes_pair = sorted_bytes_pair_counts[i][0]
+        bytes_pair_to_words[bytes_pair] = set()
+        # Find all words that contain this bytes pair
+        for word in words_counts.keys():
+            if check_bytes_pair_in_word(bytes_pair, word):
+                bytes_pair_to_words[bytes_pair].add(word)
+    return bytes_pair_to_words
+                   
+
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 def train_bpe(input_path:str, vocab_size:int, special_tokens:list[str]) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     num_processes = mp.cpu_count()
@@ -157,11 +198,11 @@ def train_bpe(input_path:str, vocab_size:int, special_tokens:list[str]) -> tuple
         tasks = [{'file_name': input_path, 'start': boundaries[i], 'end': boundaries[i+1], 'special_tokens': special_tokens} for i in range(len(boundaries)-1)]
         word_counts_list = pool.map(preprocess_segment, tasks)
     word_counts = merge_word_counts(word_counts_list)
- 
     print(f"Total unique words: {len(word_counts)}")    
     # merge until size of vocab reach vocab_size
     merged_tuples = []
     bytes_pair_counts = get_bytes_pair_counts(word_counts)
+    bytes_pair_to_words = build_bytes_pair_to_words_dict(bytes_pair_counts, word_counts, vocab_size)
     while len(vocab) < vocab_size:
         # find the most freq tuple
         best_tuple = max(bytes_pair_counts.items(), key = lambda x: (x[1], x[0]))[0]
@@ -169,7 +210,7 @@ def train_bpe(input_path:str, vocab_size:int, special_tokens:list[str]) -> tuple
         # update vocab
         vocab[len(vocab)] = best_tuple[0] + best_tuple[1]
         # replace best_tuple with new bytes
-        update_word_counts(word_counts, best_tuple, bytes_pair_counts)            
+        update_word_counts(word_counts, best_tuple, bytes_pair_counts, bytes_pair_to_words)      
     return vocab, merged_tuples
 
 
@@ -229,4 +270,4 @@ def run_train_bpe_on_owt():
 
 if __name__=="__main__":
     # test_read_write_vocab_merges()
-    run_train_bpe_on_owt()
+    run_train_bpe_on_tiny_stories()
