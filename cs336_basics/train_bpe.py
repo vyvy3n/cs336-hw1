@@ -270,4 +270,4 @@ def run_train_bpe_on_owt():
 
 if __name__=="__main__":
     # test_read_write_vocab_merges()
-    run_train_bpe_on_tiny_stories()
+    run_train_bpe_on_owt()
