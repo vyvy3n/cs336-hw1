@@ -10,6 +10,7 @@ import torch
 from torch import Tensor
 from cs336_basics.train_bpe import train_bpe
 from cs336_basics.tokenizer import Tokenizer
+from cs336_basics.linear import Linear
 
 
 
@@ -31,8 +32,11 @@ def run_linear(
     Returns:
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
+    model = Linear(in_features=d_in, out_features=d_out)
+    state_dict = {"W": weights}
+    model.load_state_dict(state_dict)
 
-    raise NotImplementedError
+    return model(in_features)
 
 
 def run_embedding(
