@@ -19,7 +19,7 @@ class RotaryPositionEmbedding(nn.Module):
         
         freqs = torch.outer(i, inv_freqs)
         freqs_complex = torch.polar(torch.ones_like(freqs), freqs)
-        self.register_buffer("freqs_complex", freqs_complex)
+        self.register_buffer("freqs_complex", freqs_complex, persistent=False)
 
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
