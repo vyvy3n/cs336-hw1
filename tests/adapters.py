@@ -40,7 +40,7 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
     model = Linear(in_features=d_in, out_features=d_out)
-    state_dict = {"W": weights}
+    state_dict = {"weight": weights}
     model.load_state_dict(state_dict)
 
     return model(in_features)
