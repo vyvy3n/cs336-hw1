@@ -16,7 +16,7 @@ from cs336_basics.rmsnorm import RMSNorm
 from cs336_basics.positionwise_feedforward import SwiGLUFFN
 from cs336_basics.rope import RotaryPositionEmbedding
 from cs336_basics.softmax import softmax
-from cs336_basics.scaled_dot_product_attention import scaled_dot_product_attention
+from cs336_basics.scaled_dot_product_attention import ScaledDotProductAttention
 from cs336_basics.multihead_self_attention import MultiHeadSelfAttention
 
 
@@ -124,7 +124,8 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    return scaled_dot_product_attention(Q, K, V, mask)
+    model = ScaledDotProductAttention()
+    return model(Q, K, V, mask)
 
 
 def run_multihead_self_attention(

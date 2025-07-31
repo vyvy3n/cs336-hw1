@@ -2,7 +2,7 @@ import torch
 from torch import nn, Tensor
 from jaxtyping import Float, Int
 from cs336_basics.rope import RotaryPositionEmbedding
-from cs336_basics.scaled_dot_product_attention import scaled_dot_product_attention
+from cs336_basics.scaled_dot_product_attention import ScaledDotProductAttention
 from cs336_basics.linear import Linear
 from einops import rearrange
     
@@ -17,6 +17,7 @@ class MultiHeadSelfAttention(nn.Module):
         self.k_proj_weight = nn.Parameter(torch.randn((d_model, d_model)))
         self.v_proj_weight = nn.Parameter(torch.randn((d_model, d_model)))
         self.o_proj_weight = nn.Parameter(torch.randn((d_model, d_model)))
+        self.attn = ScaledDotProductAttention()
 
         if theta is not None and max_seq_len is not None:
             self.rope = RotaryPositionEmbedding(theta=theta, d_k=self.d_k, max_seq_len=max_seq_len)
@@ -40,6 +41,6 @@ class MultiHeadSelfAttention(nn.Module):
             k_heads = self.rope(k_heads, token_positions=token_positions)
 
         mask = torch.tril(torch.ones(1, 1, q.shape[-2], q.shape[-2])).bool()
-        o_heads = scaled_dot_product_attention(Q=q_heads, K=k_heads, V=v_heads, mask=mask)
+        o_heads = self.attn(Q=q_heads, K=k_heads, V=v_heads, mask=mask)
         o = rearrange(o_heads, "batch heads seq d -> batch seq (heads d)")
         return o @ self.o_proj_weight.mT
