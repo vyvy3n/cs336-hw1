@@ -1,7 +1,7 @@
 import json
 import time
 
-from .adapters import run_train_bpe
+from .adapters import run_train_bpe, run_train_bpe_speed
 from .common import FIXTURES_PATH, gpt2_bytes_to_unicode
 
 
@@ -15,12 +15,13 @@ def test_train_bpe_speed():
     """
     input_path = FIXTURES_PATH / "corpus.en"
     start_time = time.time()
-    _, _ = run_train_bpe(
+    _, _ = run_train_bpe_speed(
         input_path=input_path,
         vocab_size=500,
         special_tokens=["<|endoftext|>"],
     )
     end_time = time.time()
+    print(end_time - start_time)
     assert end_time - start_time < 1.5
 
 

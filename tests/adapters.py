@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 import os
+import time
 from typing import IO, Any, BinaryIO
 from collections.abc import Iterable
 from jaxtyping import Float, Int
@@ -8,6 +10,10 @@ from jaxtyping import Float, Int
 import numpy.typing as npt
 import torch
 from torch import Tensor
+from collections import Counter, defaultdict
+import regex as re
+import multiprocessing as mp
+
 
 
 def run_linear(
@@ -589,4 +595,255 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-    raise NotImplementedError
+    # Read the input file
+    with open(input_path, 'r', encoding='utf-8') as f:
+        text = f.read()
+
+    # 1. Vocabulary initialization
+    vocab = {}
+    next_id = 0
+    
+    # Add special tokens first
+    for special_token in special_tokens:
+        vocab[next_id] = special_token.encode('utf-8')
+        next_id += 1
+    
+    # Add all 256 bytes
+    for i in range(256):
+        vocab[next_id] = bytes([i])
+        next_id += 1
+
+    # 2. Pre-tokenization using the GPT-2 regex pattern
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    
+    # Count pre-tokens and their frequencies, and convert to tokens in one pass
+    pretoken_counts = Counter()
+    pretoken_tokens = {}
+    
+    # Create a set of all substrings of special tokens to prevent merging
+    # Only if the special token actually appears in the text
+    special_token_substrings = set()
+    for special_token in special_tokens:
+        if special_token in text:
+            special_bytes = special_token.encode('utf-8')
+            for i in range(len(special_bytes)):
+                for j in range(i + 1, len(special_bytes) + 1):
+                    special_token_substrings.add(special_bytes[i:j])
+    
+    # Pre-compile the regex for better performance
+    pattern = re.compile(PAT)
+    for match in pattern.finditer(text):
+        pretoken = match.group()
+        if pretoken in special_tokens or len(pretoken) == 0:
+            continue
+        pretoken_counts[pretoken] += 1
+        if pretoken not in pretoken_tokens:
+            pretoken_tokens[pretoken] = [bytes([b]) for b in pretoken.encode('utf-8')]
+
+    # 3. Compute BPE merges
+    merges = []
+    target_vocab_size = vocab_size
+
+    while len(vocab) < target_vocab_size:
+        # Count pairs within each pre-token (not crossing boundaries)
+        pair_counts = Counter()
+        for pretoken, count in pretoken_counts.items():
+            tokens = pretoken_tokens[pretoken]
+            for i in range(len(tokens) - 1):
+                pair = (tokens[i], tokens[i + 1])
+                pair_counts[pair] += count
+        
+        if not pair_counts:
+            break
+        
+        # Find most frequent pair with lexicographic tie-breaking
+        # Skip pairs that would create tokens that are parts of special tokens
+        valid_pairs = [(pair, count) for pair, count in pair_counts.items() 
+                       if pair[0] + pair[1] not in special_token_substrings]
+        
+        if not valid_pairs:
+            break
+            
+        most_common_pair = max(valid_pairs, key=lambda x: (x[1], x[0]))[0]
+        
+        # Add to vocabulary and merges
+        vocab[next_id] = most_common_pair[0] + most_common_pair[1]
+        next_id += 1
+        merges.append(most_common_pair)
+        
+        # Update pre-tokens by merging the pair within each pre-token
+        new_pretoken_counts = Counter()
+        new_pretoken_tokens = {}
+        
+        # Pre-compute the merged token to avoid repeated concatenation
+        merged_token = most_common_pair[0] + most_common_pair[1]
+        
+        for pretoken, count in pretoken_counts.items():
+            tokens = pretoken_tokens[pretoken]
+            new_tokens = []
+            i = 0
+            while i < len(tokens):
+                if (i < len(tokens) - 1 and 
+                    tokens[i] == most_common_pair[0] and 
+                    tokens[i + 1] == most_common_pair[1]):
+                    new_tokens.append(merged_token)
+                    i += 2
+                else:
+                    new_tokens.append(tokens[i])
+                    i += 1
+            
+            # Convert back to string for deduplication
+            new_pretoken = b''.join(new_tokens).decode('utf-8', errors='ignore')
+            new_pretoken_counts[new_pretoken] += count
+            if new_pretoken not in new_pretoken_tokens:
+                new_pretoken_tokens[new_pretoken] = new_tokens
+        
+        pretoken_counts = new_pretoken_counts
+        pretoken_tokens = new_pretoken_tokens
+    
+    return vocab, merges
+    
+def run_train_bpe_speed(
+    input_path: str | os.PathLike,
+    vocab_size: int,
+    special_tokens: list[str],
+    **kwargs,
+) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+    """Highly optimized BPE tokenizer training implementation with cached pair counts."""
+    
+    # Read the input file
+    with open(input_path, 'r', encoding='utf-8') as f:
+        text = f.read()
+
+    # 1. Vocabulary initialization
+    vocab = {}
+    next_id = 0
+    
+    # Add special tokens first
+    for special_token in special_tokens:
+        vocab[next_id] = special_token.encode('utf-8')
+        next_id += 1
+    
+    # Add all 256 bytes
+    for i in range(256):
+        vocab[next_id] = bytes([i])
+        next_id += 1
+
+    # 2. Pre-tokenization using the GPT-2 regex pattern
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    pattern = re.compile(PAT)
+    
+    # Create a set of all substrings of special tokens to prevent merging
+    # Only if the special token actually appears in the text
+    special_token_substrings = set()
+    for special_token in special_tokens:
+        if special_token in text:
+            special_bytes = special_token.encode('utf-8')
+            for i in range(len(special_bytes)):
+                for j in range(i + 1, len(special_bytes) + 1):
+                    special_token_substrings.add(special_bytes[i:j])
+    
+    # Process text to get initial tokens - use Counter for efficiency
+    pretoken_counts = Counter()
+    pretoken_tokens = {}
+    
+    start_time = time.time()
+    for match in pattern.finditer(text):
+        pretoken = match.group()
+        if pretoken in special_tokens or len(pretoken) == 0:
+            continue
+        pretoken_counts[pretoken] += 1
+        if pretoken not in pretoken_tokens:
+            pretoken_tokens[pretoken] = [bytes([b]) for b in pretoken.encode('utf-8')]
+    end_time = time.time()
+    print(f"Time taken to pre-tokenize: {end_time - start_time} seconds")
+    
+    # 3. Initialize pair count cache
+    # This is the key optimization: maintain a cache of all pair counts
+    pair_counts = Counter()
+    pair_to_pretokens = defaultdict(set)  # Maps (token1, token2) -> set of pretokens containing this pair
+    
+    # Build initial pair counts and mapping
+    for pretoken, count in pretoken_counts.items():
+        tokens = pretoken_tokens[pretoken]
+        if len(tokens) < 2:
+            continue
+        for i in range(len(tokens) - 1):
+            pair = (tokens[i], tokens[i + 1])
+            pair_counts[pair] += count
+            pair_to_pretokens[pair].add(pretoken)
+    
+    # 4. Compute BPE merges with incremental updates
+    merges = []
+    target_vocab_size = vocab_size
+
+    while len(vocab) < target_vocab_size:
+        if not pair_counts:
+            break
+        
+        # Find most frequent pair with lexicographic tie-breaking
+        # Skip pairs that would create tokens that are parts of special tokens
+        valid_pairs = [(pair, count) for pair, count in pair_counts.items() 
+                       if pair[0] + pair[1] not in special_token_substrings]
+        
+        if not valid_pairs:
+            break
+            
+        most_common_pair = max(valid_pairs, key=lambda x: (x[1], x[0]))[0]
+        
+        # Add to vocabulary and merges
+        merged_token = most_common_pair[0] + most_common_pair[1]
+        vocab[next_id] = merged_token
+        next_id += 1
+        merges.append(most_common_pair)
+        
+        # Get affected pretokens
+        affected_pretokens = pair_to_pretokens[most_common_pair].copy()
+        
+        # Remove the merged pair from counts
+        del pair_counts[most_common_pair]
+        del pair_to_pretokens[most_common_pair]
+        
+        # Process each affected pretoken
+        for pretoken in affected_pretokens:
+            if pretoken not in pretoken_counts:
+                continue
+                
+            tokens = pretoken_tokens[pretoken]
+            count = pretoken_counts[pretoken]
+            
+            # Remove old pairs that are no longer present
+            for i in range(len(tokens) - 1):
+                old_pair = (tokens[i], tokens[i + 1])
+                pair_counts[old_pair] -= count
+                if pair_counts[old_pair] <= 0:
+                    del pair_counts[old_pair]
+                pair_to_pretokens[old_pair].discard(pretoken)
+                if not pair_to_pretokens[old_pair]:
+                    del pair_to_pretokens[old_pair]
+            
+            # Apply merge to create new tokens
+            new_tokens = []
+            i = 0
+            while i < len(tokens):
+                if (i < len(tokens) - 1 and 
+                    tokens[i] == most_common_pair[0] and 
+                    tokens[i + 1] == most_common_pair[1]):
+                    new_tokens.append(merged_token)
+                    i += 2
+                else:
+                    new_tokens.append(tokens[i])
+                    i += 1
+            
+            # Update the pretoken
+            pretoken_tokens[pretoken] = new_tokens
+            
+            # Add new pairs to counts
+            for i in range(len(new_tokens) - 1):
+                new_pair = (new_tokens[i], new_tokens[i + 1])
+                pair_counts[new_pair] += count
+                pair_to_pretokens[new_pair].add(pretoken)
+    
+    return vocab, merges
+    
+   
