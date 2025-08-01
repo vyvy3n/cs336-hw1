@@ -1,0 +1,27 @@
+import torch 
+from torch import nn 
+from einops import reduce, rearrange, einsum
+
+
+class PoinwiseFFN(nn.Module):
+    
+    
+    def __init__(self, d_model):
+        super().__init__()
+        self.d_ff = d_model * 4 
+        self.W1 = nn.Parameter(torch.empty(size=(self.d_ff, d_model)))
+        self.W3 = nn.Parameter(torch.empty(size=(self.d_ff, d_model)))
+        self.W2 = nn.Parameter(torch.empty(size=(d_model,self.d_ff)))
+        nn.init.trunc_normal_(self.W1)
+        nn.init.trunc_normal_(self.W2)
+        nn.init.trunc_normal_(self.W3)
+
+    def SiLU(self, x: torch.Tensor):
+        return x * torch.sigmoid(x)
+
+
+    def forward(self, x: torch.Tensor):
+        a1 = self.SiLU(einsum(x, self.W1, "... d, f d -> ... f"))
+        a2 = einsum(x, self.W3, "... d, f d -> ... f")
+        a = a1 * a2
+        return einsum(a, self.W2, "... f, d f -> ... d")
