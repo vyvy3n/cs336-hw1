@@ -1,0 +1,61 @@
+import logging
+import torch
+from configs import End2EndConfig
+from model import TransformerDecoder
+from optimizer import AdamW, CosineScheduler
+from utils import load_checkpoint, save_checkpoint
+
+
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
+
+
+class Pipeline:
+    def __init__(self, config: End2EndConfig = End2EndConfig()):
+        logging.info("Initialize Training Pipeline")
+        self.config = config
+        self.model = TransformerDecoder(**config.model.to_dict())
+        self.prepare_model()
+        self.optim = AdamW(self.model.parameters(), **config.optim.to_dict())
+        self.sched = CosineScheduler(self.optim, **config.sched.to_dict())
+
+    def prepare_model(self):
+        logging.info("Prepare Model.")
+        logging.info("Move model to %s", self.config.device)
+        self.model = self.model.to(self.config.device)
+        logging.info("Tie token embedding and LM head weights.")
+        self.model.tie_weights()
+
+    def train(self):
+        pass
+
+    def valid(self):
+        pass
+
+    def save_state(self, step: int = 0):
+        logging.info("Save state to %s", self.config.trainer.checkpoint_path)
+        save_checkpoint(self.model, self.optim, step, self.config.trainer.checkpoint_path)
+
+    def load_state(self):
+        logging.info("Load state from %s", self.config.trainer.checkpoint_path)
+        return load_checkpoint(self.config.trainer.checkpoint_path, self.model, self.optim)
+
+    @torch.no_grad()
+    def check_forward(self):
+        logging.info("Check Forward")
+        x = torch.randint(
+            0,
+            self.config.model.vocab_size,
+            (self.config.trainer.batch_size, self.config.model.context_length),
+            device=self.config.device,
+        )
+        return self.model(x)
+
+
+if __name__ == "__main__":
+    pipe = Pipeline()
+    # print(pipe.check_forward())
+    pipe.save_state()
+    print(pipe.load_state())
+    # print(pipe.model.token_embeddings)
+    # print(pipe.model.lm_head)
+    print(pipe.model)
