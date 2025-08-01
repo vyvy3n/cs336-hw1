@@ -1,7 +1,9 @@
 import os
+import random
 from typing import IO, BinaryIO
 import torch
 import numpy.typing as npt
+import numpy as np
 
 
 def get_batch(
@@ -74,3 +76,16 @@ def load_checkpoint(
     model.load_state_dict(loaded_checkpoint["model"])
     optimizer.load_state_dict(loaded_checkpoint["optimizer"])
     return loaded_checkpoint["iteration"]
+
+
+def set_seed(seed: int = 42):
+    """Set seed
+    Args:
+        seed: int (default 42)
+    Return
+        None
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)

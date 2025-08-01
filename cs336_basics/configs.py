@@ -66,6 +66,7 @@ class End2EndConfig(BaseConfig):
     optim: AdamWConfig = field(default_factory=AdamWConfig)
     sched: CosineSchedulerConfig = field(default_factory=CosineSchedulerConfig)
     device: str | None = None
+    seed: int = 42
 
     def __post_init__(self):
         if self.device is None:

@@ -1,3 +1,4 @@
+import json
 import regex as re
 from collections.abc import Iterable, Iterator
 import heapq
@@ -249,3 +250,15 @@ class BPETokenizer:
     def decode(self, ids: list[int]) -> str:
         output_bytes = b"".join(map(self.vocab.get, ids))
         return output_bytes.decode("utf-8", errors="replace")
+
+    @classmethod
+    def from_vocab(cls, vocab_path: str, merges_path: str):
+        with open(vocab_path) as vocab_f:
+            json_vocab = json.load(vocab_f)
+        tuples_merges = []
+        with open(merges_path) as f:
+            for line in f:
+                cleaned_line = line.rstrip()
+                if cleaned_line and len(cleaned_line.split(" ")) == 2:
+                    tuples_merges.append(tuple(cleaned_line.split(" ")))
+        return cls(json_vocab, tuples_merges, ["<|endoftext|>"])
