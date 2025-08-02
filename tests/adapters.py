@@ -545,6 +545,165 @@ def run_load_checkpoint(
     raise NotImplementedError
 
 
+import collections
+import os
+import re
+import time
+from collections import Counter, defaultdict
+from typing import Any, Iterable
+
+import numpy as np
+import numpy.typing as npt
+import torch
+from torch import Tensor
+from torch.nn import functional as F
+
+from .common import gpt2_bytes_to_unicode
+
+Float = torch.float32
+Int = torch.int64
+
+
+class BPETokenizer:
+    def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens or []
+        
+        # Create reverse mapping from bytes to token ID
+        self.token_to_id = {token_bytes: token_id for token_id, token_bytes in vocab.items()}
+        
+        # Create set of special token bytes for quick lookup
+        self.special_token_bytes = {token.encode('utf-8') for token in self.special_tokens}
+        
+        # Create merge lookup for efficient encoding
+        self.merge_lookup = {}
+        for token1, token2 in merges:
+            merged = token1 + token2
+            if merged not in self.merge_lookup:
+                self.merge_lookup[merged] = (token1, token2)
+    
+    def encode(self, text: str) -> list[int]:
+        """Encode text to token IDs."""
+        if not text:
+            return []
+        
+        # Handle special tokens first
+        tokens = self._split_with_special_tokens(text)
+        
+        # Encode each token
+        token_ids = []
+        for token in tokens:
+            if token in self.special_tokens:
+                # Special token - encode directly
+                token_bytes = token.encode('utf-8')
+                if token_bytes in self.token_to_id:
+                    token_ids.append(self.token_to_id[token_bytes])
+                else:
+                    # Fallback: encode as regular text
+                    token_ids.extend(self._encode_token(token))
+            else:
+                # Regular token - apply BPE
+                token_ids.extend(self._encode_token(token))
+        
+        return token_ids
+    
+    def decode(self, token_ids: list[int]) -> str:
+        """Decode token IDs back to text."""
+        if not token_ids:
+            return ""
+        
+        # Convert token IDs to bytes
+        token_bytes_list = []
+        for token_id in token_ids:
+            if token_id in self.vocab:
+                token_bytes_list.append(self.vocab[token_id])
+            else:
+                # Handle unknown token IDs
+                token_bytes_list.append(b'')
+        
+        # Concatenate all bytes
+        all_bytes = b''.join(token_bytes_list)
+        
+        # Decode to string
+        try:
+            return all_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            # Handle invalid UTF-8 by replacing invalid sequences
+            return all_bytes.decode('utf-8', errors='replace')
+    
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterable[int]:
+        """Encode text from an iterable, yielding token IDs one at a time."""
+        for line in iterable:
+            token_ids = self.encode(line)
+            for token_id in token_ids:
+                yield token_id
+    
+    def _split_with_special_tokens(self, text: str) -> list[str]:
+        """Split text while preserving special tokens."""
+        if not self.special_tokens:
+            return [text]
+        
+        # Sort special tokens by length (longest first) to handle overlapping tokens
+        sorted_special_tokens = sorted(self.special_tokens, key=len, reverse=True)
+        
+        tokens = [text]
+        for special_token in sorted_special_tokens:
+            new_tokens = []
+            for token in tokens:
+                if special_token in token:
+                    # Split around the special token
+                    parts = token.split(special_token)
+                    for i, part in enumerate(parts):
+                        if part:  # Add non-empty parts
+                            new_tokens.append(part)
+                        if i < len(parts) - 1:  # Add special token between parts
+                            new_tokens.append(special_token)
+                else:
+                    new_tokens.append(token)
+            tokens = new_tokens
+        
+        return tokens
+    
+    def _encode_token(self, token: str) -> list[int]:
+        """Encode a single token using BPE."""
+        # Convert token to bytes
+        token_bytes = token.encode('utf-8')
+        
+        # Start with individual bytes
+        current_tokens = [bytes([b]) for b in token_bytes]
+        
+        # Apply BPE merges
+        for token1, token2 in self.merges:
+            merged = token1 + token2
+            new_tokens = []
+            i = 0
+            while i < len(current_tokens):
+                if (i < len(current_tokens) - 1 and 
+                    current_tokens[i] == token1 and 
+                    current_tokens[i + 1] == token2):
+                    new_tokens.append(merged)
+                    i += 2
+                else:
+                    new_tokens.append(current_tokens[i])
+                    i += 1
+            current_tokens = new_tokens
+        
+        # Convert final tokens to IDs
+        token_ids = []
+        for token_bytes in current_tokens:
+            if token_bytes in self.token_to_id:
+                token_ids.append(self.token_to_id[token_bytes])
+            else:
+                # Handle unknown tokens by encoding as individual bytes
+                for b in token_bytes:
+                    byte_token = bytes([b])
+                    if byte_token in self.token_to_id:
+                        token_ids.append(self.token_to_id[byte_token])
+        
+        return token_ids
+
+
 def get_tokenizer(
     vocab: dict[int, bytes],
     merges: list[tuple[bytes, bytes]],
@@ -565,10 +724,9 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    raise NotImplementedError
-
-
-def run_train_bpe(
+    return BPETokenizer(vocab, merges, special_tokens)
+    
+def run_train_bpe_slow(
     input_path: str | os.PathLike,
     vocab_size: int,
     special_tokens: list[str],
@@ -703,7 +861,7 @@ def run_train_bpe(
     
     return vocab, merges
     
-def run_train_bpe_speed(
+def run_train_bpe(
     input_path: str | os.PathLike,
     vocab_size: int,
     special_tokens: list[str],

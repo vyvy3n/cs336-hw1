@@ -1,7 +1,7 @@
 import json
 import time
 
-from .adapters import run_train_bpe, run_train_bpe_speed
+from .adapters import run_train_bpe
 from .common import FIXTURES_PATH, gpt2_bytes_to_unicode
 
 
@@ -15,7 +15,7 @@ def test_train_bpe_speed():
     """
     input_path = FIXTURES_PATH / "corpus.en"
     start_time = time.time()
-    _, _ = run_train_bpe_speed(
+    _, _ = run_train_bpe(
         input_path=input_path,
         vocab_size=500,
         special_tokens=["<|endoftext|>"],
