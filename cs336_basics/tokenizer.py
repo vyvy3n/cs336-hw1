@@ -383,11 +383,9 @@ class BPETokenizer:
 
 
 if __name__ == "__main__":
-    bpe = BPETokenizer.from_training(
-        "/home/a/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt", 32768, ["<|endoftext|>"]
-    )
+    bpe = BPETokenizer.from_training("./data/TinyStoriesV2-GPT4-train.txt", 32768, ["<|endoftext|>"])
     bpe.save(
-        "/home/a/assignment1-basics/tokenizer/gpt2_vocab.json",
-        "/home/a/assignment1-basics/tokenizer/gpt2_merges.txt",
-        "/home/a/assignment1-basics/tokenizer/special.txt",
+        "./tokenizer/gpt2_vocab.json",
+        "./tokenizer/gpt2_merges.txt",
+        "./tokenizer/special.txt",
     )

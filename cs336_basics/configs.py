@@ -60,11 +60,19 @@ class TrainerConfig(BaseConfig):
 
 
 @dataclass
+class TokenizerConfig(BaseConfig):
+    vocab_path: str = "./tokenizer/gpt2_vocab.json"
+    merges_path: str = "./tokenizer/gpt2_merges.txt"
+    special_tokens_path: str = "./tokenizer/special.txt"
+
+
+@dataclass
 class End2EndConfig(BaseConfig):
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     optim: AdamWConfig = field(default_factory=AdamWConfig)
     sched: CosineSchedulerConfig = field(default_factory=CosineSchedulerConfig)
+    tokens: TokenizerConfig = field(default_factory=TokenizerConfig)
     device: str | None = None
     seed: int = 42
 

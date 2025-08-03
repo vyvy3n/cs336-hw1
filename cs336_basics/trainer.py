@@ -4,6 +4,7 @@ from configs import End2EndConfig
 from model import TransformerDecoder
 from optimizer import AdamW, CosineScheduler
 from utils import load_checkpoint, save_checkpoint, set_seed
+from tokenizer import BPETokenizer
 
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
@@ -18,6 +19,7 @@ class Pipeline:
         self.model = TransformerDecoder(**config.model.to_dict())
         self.optim = AdamW(self.model.parameters(), **config.optim.to_dict())
         self.sched = CosineScheduler(self.optim, **config.sched.to_dict())
+        self.token = BPETokenizer.from_vocab(**config.tokens.to_dict())
 
         self.prepare_model()
 
@@ -29,10 +31,11 @@ class Pipeline:
         self.model.tie_weights()
         self.load_state()
 
-    def train(self):
+    def train(self,train_data_path:str):
         pass
 
-    def valid(self):
+    @torch.inference_mode()
+    def valid(self,val_data_path:str)->float:
         pass
 
     def save_state(self):
@@ -61,8 +64,8 @@ class Pipeline:
 if __name__ == "__main__":
     pipe = Pipeline()
     # print(pipe.check_forward())
-    pipe.save_state()
-    pipe.load_state()
+    # pipe.save_state()
+    # pipe.load_state()
     # print(pipe.model.token_embeddings)
     # print(pipe.model.lm_head)
     print(pipe.model.lm_head.weight.device)
