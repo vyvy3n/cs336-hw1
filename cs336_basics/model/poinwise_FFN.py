@@ -6,9 +6,12 @@ from einops import reduce, rearrange, einsum
 class PoinwiseFFN(nn.Module):
     
     
-    def __init__(self, d_model):
+    def __init__(self, d_model, d_ff=None):
         super().__init__()
-        self.d_ff = d_model * 4 
+        if d_ff is None:
+            d_ff = int(8/3 * d_model)
+            d_ff = ((d_ff + 63) // 64) * 64 
+        self.d_ff = d_ff 
         self.W1 = nn.Parameter(torch.empty(size=(self.d_ff, d_model)))
         self.W3 = nn.Parameter(torch.empty(size=(self.d_ff, d_model)))
         self.W2 = nn.Parameter(torch.empty(size=(d_model,self.d_ff)))
