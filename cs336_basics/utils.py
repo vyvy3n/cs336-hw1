@@ -29,7 +29,9 @@ def get_batch(
     idx_sample = torch.randint(0, len(dataset) - context_length, (batch_size,))
     idx_sample = idx_sample[:, None] + torch.arange(context_length + 1)
     data = torch.from_numpy(dataset)
-    sample = data[idx_sample].to(device)
+    sample = data[idx_sample]
+    if "cuda" in device:
+        sample = sample.pin_memory().to(device, non_blocking=True)
     return (sample[:, :-1], sample[:, 1:])
 
 

@@ -293,9 +293,18 @@ class BPETokenizer:
 
         return append
 
+    def encode_file(self, file_name: str) -> list[int]:
+        with open(file_name) as f:
+            text = f.read()
+        return self.encode(text)
+
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
         for text in iterable:
             yield from self.encode(text)
+
+    def stream_encode(self, file_name: str):
+        with open(file_name) as f:
+            yield from self.encode_iterable(f)
 
     def decode(self, ids: list[int]) -> str:
         output_bytes = b"".join(map(self.vocab.get, ids))
@@ -383,7 +392,7 @@ class BPETokenizer:
 
 
 if __name__ == "__main__":
-    bpe = BPETokenizer.from_training("./data/TinyStoriesV2-GPT4-train.txt", 32768, ["<|endoftext|>"])
+    bpe = BPETokenizer.from_training("./data/TinyStoriesV2-GPT4-train.txt", 8192, ["<|endoftext|>"])
     bpe.save(
         "./tokenizer/gpt2_vocab.json",
         "./tokenizer/gpt2_merges.txt",

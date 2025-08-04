@@ -1,10 +1,13 @@
 import logging
+import itertools
 import torch
-from configs import End2EndConfig
-from model import TransformerDecoder
-from optimizer import AdamW, CosineScheduler
-from utils import load_checkpoint, save_checkpoint, set_seed
-from tokenizer import BPETokenizer
+from tqdm import tqdm
+from cs336_basics.configs import End2EndConfig
+from cs336_basics.tokenizer import BPETokenizer
+from cs336_basics.model import TransformerDecoder
+from cs336_basics.optimizer import AdamW, CosineScheduler
+from cs336_basics.nn_utils import cross_entropy
+from cs336_basics.utils import load_checkpoint, save_checkpoint, set_seed, get_batch
 
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
@@ -31,12 +34,38 @@ class Pipeline:
         self.model.tie_weights()
         self.load_state()
 
-    def train(self,train_data_path:str):
+    def train(self, train_data_path: str):
         pass
 
     @torch.inference_mode()
-    def valid(self,val_data_path:str)->float:
-        pass
+    def valid(self, val_data_path: str, stream: bool = False) -> float:
+        logging.info("Start Validation")
+        bs = self.config.trainer.val_batch_size
+        cl = self.config.model.context_length
+        self.model.eval()
+        if stream:
+            raw_data = self.token.stream_encode(val_data_path)
+        else:
+            raw_data = self.token.encode_file(val_data_path)
+
+        log_perplexity = torch.zeros(1, device=self.config.device)
+        sample = []
+        tmp, raw_data = itertools.tee(raw_data)
+        bar = tqdm(desc="eval step", total=sum(1 for _ in tmp) // (bs * (cl + 1)))
+        del tmp
+        for token in raw_data:
+            sample.append(token)
+            if len(sample) == bs * (cl + 1):
+                bar.update()
+                xy = torch.tensor(sample, pin_memory=True).reshape((bs, cl + 1))
+                if "cuda" in self.config.device:
+                    xy = xy.to(device=self.config.device, non_blocking=True)
+                x, y = xy[:, :-1], xy[:, 1:]
+                sample = []
+                log_perplexity += cross_entropy(self.model(x), y)
+        log_perplexity *= bs
+        bar.close()
+        return log_perplexity.item()  # .exp()
 
     def save_state(self):
         logging.info("Save the state at step %s to %s", self.step, self.config.trainer.checkpoint_path)
@@ -68,4 +97,7 @@ if __name__ == "__main__":
     # pipe.load_state()
     # print(pipe.model.token_embeddings)
     # print(pipe.model.lm_head)
-    print(pipe.model.lm_head.weight.device)
+    # print(pipe.model.lm_head.weight.device)
+    pp = pipe.valid("data/TinyStoriesV2-GPT4-valid.txt")
+    print(pp)
+    # pipe.valid("data/TinyStoriesV2-GPT4-valid.txt", True)

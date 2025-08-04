@@ -10,9 +10,9 @@ class BaseConfig:
 
 @dataclass
 class ModelConfig(BaseConfig):
-    vocab_size: int = 32768
-    context_length: int = 2048
-    d_model: int = 1024
+    vocab_size: int = 8192  # 32768
+    context_length: int = 512  # 2048
+    d_model: int = 256  # 1024
     num_heads: int = 8
     num_layers: int | None = None
     d_ff: int | None = None
@@ -23,7 +23,7 @@ class ModelConfig(BaseConfig):
             self.d_ff = 4 * self.d_model
 
         if self.num_layers is None:
-            self.num_layers = self.d_model // 128
+            self.num_layers = self.d_model // 16  # 128
 
 
 @dataclass
@@ -45,8 +45,9 @@ class CosineSchedulerConfig(BaseConfig):
 
 @dataclass
 class TrainerConfig(BaseConfig):
-    epochs: int = 100
-    batch_size: int = 32
+    epochs: int = 10  # 100
+    train_batch_size: int = 32
+    val_batch_size: int = 32
     checkpoint_folder: str | Path = "./checkpointing"
     checkpoint_path: str | Path | None = None
     gradient_accumulation: int = 1
@@ -83,3 +84,7 @@ class End2EndConfig(BaseConfig):
                 self.device = f"cuda:{index}"
             else:
                 self.device = "cpu"
+
+
+if __name__ == "__main__":
+    print(End2EndConfig())
