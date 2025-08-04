@@ -10,7 +10,7 @@ class RMSNorm(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.eps = eps
-        self.gs = nn.Parameter(torch.empty(size=(d_model,)))
+        self.gs = nn.Parameter(torch.empty(size=(d_model,), device=device, dtype=dtype))
         nn.init.trunc_normal_(self.gs)
 
         

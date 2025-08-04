@@ -4,9 +4,9 @@ import torch
 
 class Embedding(nn.Module):
     
-    def __init__(self, num_embeddings, embedding_dim, device=None, dtype=None) -> None:
+    def __init__(self, num_embeddings, d_model, device=None, dtype=None) -> None:
         super().__init__()
-        self.emb_matrix = nn.Parameter(torch.empty(size=(num_embeddings,embedding_dim), device=device, dtype=dtype))
+        self.emb_matrix = nn.Parameter(torch.empty(size=(num_embeddings,d_model), device=device, dtype=dtype))
         nn.init.trunc_normal_(self.emb_matrix)
         
         
