@@ -18,6 +18,7 @@ from cs336_basics.rope import RotaryPositionEmbedding
 from cs336_basics.softmax import softmax
 from cs336_basics.scaled_dot_product_attention import ScaledDotProductAttention
 from cs336_basics.multihead_self_attention import MultiHeadSelfAttention
+from cs336_basics.transformer import TransformerBlock
 
 
 
@@ -310,7 +311,10 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    model = TransformerBlock(d_model=d_model, n_heads=num_heads, d_ff=d_ff, theta=theta, max_seq_len=max_seq_len)
+    model.load_state_dict(weights)
+
+    return model(in_features)
 
 
 def run_transformer_lm(
@@ -416,7 +420,7 @@ def run_rmsnorm(
         RMSNorm of the `in_features`.
     """
     model = RMSNorm(d_model, eps)
-    model_state_dict = {"gain": weights}
+    model_state_dict = {"weight": weights}
     model.load_state_dict(model_state_dict)
     return model(in_features)
 
