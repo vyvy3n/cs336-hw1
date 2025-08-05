@@ -13,10 +13,10 @@ class MultiHeadSelfAttention(nn.Module):
         self.n_heads = n_heads
         self.d_k = d_model // n_heads
         assert self.d_k * n_heads == d_model, f"d_model ({d_model}) is not divisible by n_heads ({n_heads})."
-        self.q_proj_weight = nn.Parameter(torch.randn((d_model, d_model)))
-        self.k_proj_weight = nn.Parameter(torch.randn((d_model, d_model)))
-        self.v_proj_weight = nn.Parameter(torch.randn((d_model, d_model)))
-        self.o_proj_weight = nn.Parameter(torch.randn((d_model, d_model)))
+        self.q_proj = Linear(d_model, d_model)
+        self.k_proj = Linear(d_model, d_model)
+        self.v_proj = Linear(d_model, d_model)
+        self.output_proj = Linear(d_model, d_model)
         self.attn = ScaledDotProductAttention()
 
         if theta is not None and max_seq_len is not None:
@@ -27,9 +27,9 @@ class MultiHeadSelfAttention(nn.Module):
 
     def forward(self, x: Float[Tensor, "... seq_len d_model"], 
                 token_positions: Int[Tensor, "... seq_len"] | None = None) -> Float[Tensor, "... seq_len d_model"]:
-        q = x @ self.q_proj_weight.mT
-        k = x @ self.k_proj_weight.mT
-        v = x @ self.v_proj_weight.mT
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
         
         q_heads = rearrange(q, "batch seq (heads d) -> batch heads seq d", heads=self.n_heads)
         k_heads = rearrange(k, "batch seq (heads d) -> batch heads seq d", heads=self.n_heads)
@@ -43,4 +43,4 @@ class MultiHeadSelfAttention(nn.Module):
         mask = torch.tril(torch.ones(1, 1, q.shape[-2], q.shape[-2])).bool()
         o_heads = self.attn(Q=q_heads, K=k_heads, V=v_heads, mask=mask)
         o = rearrange(o_heads, "batch heads seq d -> batch seq (heads d)")
-        return o @ self.o_proj_weight.mT
+        return self.output_proj(o)

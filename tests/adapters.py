@@ -163,10 +163,10 @@ def run_multihead_self_attention(
 
     model = MultiHeadSelfAttention(d_model=d_model, n_heads=num_heads)
     model.load_state_dict({
-        "q_proj_weight": q_proj_weight,
-        "k_proj_weight": k_proj_weight,
-        "v_proj_weight": v_proj_weight,
-        "o_proj_weight": o_proj_weight,
+        "q_proj.weight": q_proj_weight,
+        "k_proj.weight": k_proj_weight,
+        "v_proj.weight": v_proj_weight,
+        "output_proj.weight": o_proj_weight,
     })
     return model(in_features)
 
@@ -210,10 +210,10 @@ def run_multihead_self_attention_with_rope(
     """
     model = MultiHeadSelfAttention(d_model=d_model, n_heads=num_heads, theta=theta, max_seq_len=max_seq_len)
     model.load_state_dict({
-        "q_proj_weight": q_proj_weight,
-        "k_proj_weight": k_proj_weight,
-        "v_proj_weight": v_proj_weight,
-        "o_proj_weight": o_proj_weight,
+        "q_proj.weight": q_proj_weight,
+        "k_proj.weight": k_proj_weight,
+        "v_proj.weight": v_proj_weight,
+        "output_proj.weight": o_proj_weight,
     })
     return model(in_features, token_positions)
 
