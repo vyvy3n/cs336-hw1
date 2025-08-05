@@ -102,7 +102,7 @@ def run_swiglu(
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
     model = SwiGLUFFN(d_model, d_ff)
-    state_dict = {"W1": w1_weight, "W2": w2_weight, "W3": w3_weight}
+    state_dict = {"w1.weight": w1_weight, "w2.weight": w2_weight, "w3.weight": w3_weight}
     model.load_state_dict(state_dict)
     return model(in_features)
 
