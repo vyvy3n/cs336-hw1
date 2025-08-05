@@ -51,7 +51,7 @@ class RMSNorm(nn.Module):
         # Compute the RMS norm (no centering)
         in_dtype = x.dtype
         x = x.to(torch.float32)
-        rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True))  # L2 norm along the last dimension
-        x_normed = x / (rms + self.eps)        # Normalize
+        rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)  # L2 norm along the last dimension
+        x_normed = x / rms        # Normalize
         return (x_normed * self.weight).to(in_dtype)            # Apply learnable scale
 
