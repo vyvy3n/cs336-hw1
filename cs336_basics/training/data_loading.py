@@ -29,10 +29,7 @@ def data_loading(x, batch_size, context_length, device):
 
 
 if __name__ == "__main__":
-    # Test data_loading function
     print("Testing data_loading function...")
-    
-    # Create test data
     test_data = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
     batch_size = 3
     context_length = 5
