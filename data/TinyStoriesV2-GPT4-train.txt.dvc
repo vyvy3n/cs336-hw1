@@ -1,0 +1,5 @@
+outs:
+- md5: f14749c06624ab6311c8e50ca80f4043
+  size: 2227753162
+  hash: md5
+  path: TinyStoriesV2-GPT4-train.txt

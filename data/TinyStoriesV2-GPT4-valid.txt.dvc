@@ -1,0 +1,5 @@
+outs:
+- md5: 8caebaf671ccbaaafe769409ef7f63c7
+  size: 22502601
+  hash: md5
+  path: TinyStoriesV2-GPT4-valid.txt
