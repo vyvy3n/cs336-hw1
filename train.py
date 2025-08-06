@@ -13,7 +13,12 @@ from cs336_basics.training.learning_rate_schedule import get_lr_cosine_schedule
 from cs336_basics.training.gradient_clipping import gradient_clipping
 from cs336_basics.training.cross_entropy import cross_entropy
 from cs336_basics.training.checkpointing import save_checkpoint, load_checkpoint
+from cs336_basics.training.mlflow_utils import (
+    setup_mlflow, log_hyperparameters, log_training_metrics, 
+    log_validation_metrics, log_model_checkpoint, finish_mlflow_run
+)
 from cs336_basics.tokenizer.Tokenizer import Tokenizer
+from cs336_basics.tokenizer.OpenAITokenizer import OpenAITokenizer
 
 
 def parse_args():
@@ -49,17 +54,31 @@ def parse_args():
     parser.add_argument('--eval_every', type=int, default=1000)
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
     
+    # MLflow arguments
+    parser.add_argument('--use_mlflow', action='store_true', help='Enable MLflow tracking')
+    parser.add_argument('--mlflow_experiment', type=str, default='gpt-training', help='MLflow experiment name')
+    parser.add_argument('--mlflow_tracking_uri', type=str, help='MLflow tracking URI (optional)')
+    
+    # Tokenizer arguments
+    parser.add_argument('--use_openai_tokenizer', action='store_true', help='Use OpenAI tiktoken tokenizer instead of custom BPE')
+    
     return parser.parse_args()
 
-# Load tokenizer globally
-import pickle
-with open("data/bpe_results_vocab10000.pkl", "rb") as f:
-    bpe_data = pickle.load(f)
-vocab = bpe_data["vocab"] 
-merges = bpe_data["merges"]
-tokenizer = Tokenizer(vocab, merges)
+def get_tokenizer(use_openai_tokenizer=False):
+    """Get tokenizer based on configuration."""
+    if use_openai_tokenizer:
+        print("Using OpenAI tiktoken tokenizer (gpt2)")
+        return OpenAITokenizer("gpt2")
+    else:
+        print("Using custom BPE tokenizer")
+        import pickle
+        with open("data/bpe_results_vocab10000.pkl", "rb") as f:
+            bpe_data = pickle.load(f)
+        vocab = bpe_data["vocab"] 
+        merges = bpe_data["merges"]
+        return Tokenizer(vocab, merges)
 
-def load_data(data_path, tokenizer=tokenizer):
+def load_data(data_path, tokenizer):
     if data_path.endswith('.npy'):
         return np.load(data_path, mmap_mode='r')
     else:
@@ -92,18 +111,23 @@ def main():
     torch.manual_seed(42)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     
+    # Setup MLflow if enabled
+    if args.use_mlflow:
+        setup_mlflow(args.mlflow_experiment, args.mlflow_tracking_uri)
+        print(f"MLflow tracking enabled for experiment: {args.mlflow_experiment}")
+    
     print(f"Using device: {args.device}")
     print(f"Training parameters: {vars(args)}")
     
-    print(f"Using BPE tokenizer with vocab size: {len(tokenizer.vocab)}")
+    # Initialize tokenizer
+    tokenizer = get_tokenizer(args.use_openai_tokenizer)
+    actual_vocab_size = len(tokenizer.vocab)
+    print(f"Tokenizer vocab size: {actual_vocab_size}")
     
     print("Loading training data...")
-    train_data = load_data(args.train_data)
-    val_data = load_data(args.val_data) if args.val_data else None
+    train_data = load_data(args.train_data, tokenizer)
+    val_data = load_data(args.val_data, tokenizer) if args.val_data else None
     print(f"Training data size: {len(train_data)} tokens")
-    
-    actual_vocab_size = len(tokenizer.vocab)
-    print(f"Using vocab size: {actual_vocab_size}")
     
     model = GPTZero(
         vocab_size=actual_vocab_size,
@@ -122,6 +146,10 @@ def main():
         beta2=args.beta2,
         weight_decay=args.weight_decay
     )
+    
+    # Log hyperparameters to MLflow
+    if args.use_mlflow:
+        log_hyperparameters(args, actual_vocab_size)
     
     start_step = 0
     if args.resume_from:
@@ -161,20 +189,35 @@ def main():
             avg_time = np.mean(step_times[-100:]) if step_times else step_time
             print(f"Step {step:6d} | Loss: {loss.item():.4f} | LR: {lr:.2e} | "
                   f"Time: {step_time:.3f}s | Avg: {avg_time:.3f}s")
+            
+            if args.use_mlflow:
+                log_training_metrics(step, loss.item(), lr, avg_time)
         
         if val_data is not None and step % args.eval_every == 0 and step > 0:
             val_loss = evaluate_model(model, val_data, args)
             print(f"Step {step:6d} | Validation Loss: {val_loss:.4f}")
+            
+            if args.use_mlflow:
+                log_validation_metrics(step, val_loss)
         
         if step % args.save_every == 0 and step > 0:
             checkpoint_path = os.path.join(args.checkpoint_dir, f"checkpoint_step_{step}.pt")
             save_checkpoint(model, optimizer, step, checkpoint_path)
             print(f"Saved checkpoint: {checkpoint_path}")
+            
+            if args.use_mlflow:
+                log_model_checkpoint(model, checkpoint_path, step)
     
     # Final checkpoint
     final_path = os.path.join(args.checkpoint_dir, f"final_checkpoint.pt")
     save_checkpoint(model, optimizer, args.max_steps, final_path)
     print(f"Training completed! Final checkpoint saved: {final_path}")
+    
+    # End MLflow run
+    if args.use_mlflow:
+        log_model_checkpoint(model, final_path, args.max_steps)
+        finish_mlflow_run()
+        print("MLflow run completed!")
 
 
 if __name__ == "__main__":

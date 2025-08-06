@@ -23,6 +23,7 @@ dependencies = [
     "jupyterlab>=4.4.5",
     "dvc>=3.61.0",
     "awscli>=1.42.3",
+    "mlflow>=2.19.0",
 ]
 
 [build-system]
