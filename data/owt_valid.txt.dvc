@@ -1,0 +1,5 @@
+outs:
+- md5: c3758800b8c7b4e695ec0d8b661dc22d
+  size: 289998753
+  hash: md5
+  path: owt_valid.txt

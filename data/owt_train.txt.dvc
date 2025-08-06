@@ -1,0 +1,5 @@
+outs:
+- md5: 13776262018708aa60da4a5d59d1efa5
+  size: 11920511059
+  hash: md5
+  path: owt_train.txt
