@@ -1,4 +1,4 @@
 [core]
     remote = storage
 ['remote "storage"']
-    url = /home/ed/work/other_projects/stanLLMasingments/StanfP1/data
+    url = file:///home/ed/dvc_remote
