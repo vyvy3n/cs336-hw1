@@ -50,13 +50,16 @@ def find_chunk_boundaries(
 
 
 ## Usage
-with open(..., "rb") as f:
-    num_processes = 4
+with open('../data/debug_small_text.txt', "rb") as f:
+    num_processes = 32
     boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
+    print(f"Number of boundaries found: {len(boundaries)}")
+    print(f"Boundaries: {boundaries}")
 
     # The following is a serial implementation, but you can parallelize this
     # by sending each start/end pair to a set of processes.
     for start, end in zip(boundaries[:-1], boundaries[1:]):
+        # print(start, end)
         f.seek(start)
         chunk = f.read(end - start).decode("utf-8", errors="ignore")
         # Run pre-tokenization on your chunk and store the counts for each pre-token
