@@ -61,14 +61,19 @@ def parse_args():
     
     # Tokenizer arguments
     parser.add_argument('--use_openai_tokenizer', action='store_true', help='Use OpenAI tiktoken tokenizer instead of custom BPE')
+    parser.add_argument('--max_vocab_size', type=int, help='Limit vocab size (useful for reducing model size)')
     
     return parser.parse_args()
 
-def get_tokenizer(use_openai_tokenizer=False):
+def get_tokenizer(use_openai_tokenizer=False, max_vocab_size=None):
     """Get tokenizer based on configuration."""
     if use_openai_tokenizer:
-        print("Using OpenAI tiktoken tokenizer (gpt2)")
-        return OpenAITokenizer("gpt2")
+        if max_vocab_size:
+            print(f"Using OpenAI tiktoken tokenizer (gpt2) with vocab_size limited to {max_vocab_size}")
+            return OpenAITokenizer("gpt2", max_vocab_size=max_vocab_size)
+        else:
+            print("Using OpenAI tiktoken tokenizer (gpt2)")
+            return OpenAITokenizer("gpt2")
     else:
         print("Using custom BPE tokenizer")
         import pickle
@@ -118,7 +123,7 @@ def main():
     print(f"Using device: {args.device}")
     print(f"Training parameters: {vars(args)}")
     
-    tokenizer = get_tokenizer(args.use_openai_tokenizer)
+    tokenizer = get_tokenizer(args.use_openai_tokenizer, args.max_vocab_size)
     actual_vocab_size = tokenizer.vocab_size
     print(f"Tokenizer vocab size: {actual_vocab_size}")
     
