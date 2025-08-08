@@ -15,10 +15,10 @@ def setup_mlflow(experiment_name="gpt-training", tracking_uri=None):
     return mlflow.start_run()
 
 
-def log_hyperparameters(args):
+def log_hyperparameters(args, actual_vocab_size=None):
     """Log training hyperparameters to MLflow."""
     params = {
-        'vocab_size': args.vocab_size,
+        'vocab_size': actual_vocab_size or args.vocab_size,
         'context_length': args.context_length,
         'd_model': args.d_model,
         'num_layers': args.num_layers,
@@ -33,6 +33,7 @@ def log_hyperparameters(args):
         'beta1': args.beta1,
         'beta2': args.beta2,
         'grad_clip': args.grad_clip,
+        'use_openai_tokenizer': getattr(args, 'use_openai_tokenizer', False),
     }
     mlflow.log_params(params)
 

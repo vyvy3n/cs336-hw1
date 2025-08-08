@@ -84,7 +84,7 @@ def load_data(data_path, tokenizer):
     else:
         with open(data_path, 'r') as f:
             text = f.read()
-        tokens = tokenizer.encode(text[:1000000]) 
+        tokens = tokenizer.encode(text) 
         
         return np.array(tokens, dtype=np.int32)
 
@@ -111,7 +111,6 @@ def main():
     torch.manual_seed(42)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     
-    # Setup MLflow if enabled
     if args.use_mlflow:
         setup_mlflow(args.mlflow_experiment, args.mlflow_tracking_uri)
         print(f"MLflow tracking enabled for experiment: {args.mlflow_experiment}")
@@ -119,9 +118,8 @@ def main():
     print(f"Using device: {args.device}")
     print(f"Training parameters: {vars(args)}")
     
-    # Initialize tokenizer
     tokenizer = get_tokenizer(args.use_openai_tokenizer)
-    actual_vocab_size = len(tokenizer.vocab)
+    actual_vocab_size = tokenizer.vocab_size
     print(f"Tokenizer vocab size: {actual_vocab_size}")
     
     print("Loading training data...")

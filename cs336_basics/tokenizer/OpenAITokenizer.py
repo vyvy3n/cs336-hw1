@@ -19,14 +19,12 @@ class OpenAITokenizer:
                 return self.size
                 
             def items(self):
-                # This is a simplified implementation
-                # In practice, tiktoken vocab is not easily enumerable
                 return []
                 
         return VocabProxy(self.vocab_size)
     
     def encode(self, text: str) -> list[int]:
-        return self.tokenizer.encode(text)
+        return self.tokenizer.encode(text, allowed_special={'<|endoftext|>'})
     
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
         for text in iterable:
