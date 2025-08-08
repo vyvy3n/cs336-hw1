@@ -83,10 +83,6 @@ class BPE:
 
 
     def _process_chunk_and_get_pairs(self, args):
-        """
-        This worker does everything: reads a chunk, gets word counts,
-        and returns the final pair counts for that chunk.
-        """
         start, end = args
 
         # --- Part 1: Get word counts (from your _process_chunk) ---
@@ -100,22 +96,205 @@ class BPE:
                 words_generator = (m.group(0) for m in self.PAT.finditer(special_chunk))
                 word_counts.update(words_generator)
         end_time = datetime.datetime.now()
-        print(f'Time to process chunk and get word counts: {end_time - start_time}')
+        # print(f'Time to process chunk and get word counts: {end_time - start_time}')
 
         # --- Part 2: Get pair counts (from your _get_pairs_from_chunk) ---
+        word_structures_chunk = {}
         start_time = datetime.datetime.now()
         pair_counts = Counter()
         for word_str, count in word_counts.items():
-            word_bytes = word_str.encode('utf-8')
-            if len(word_bytes) < 2:
+            word_bytes_tuple = tuple(word_str.encode('utf-8'))
+            word_structures_chunk[word_bytes_tuple] = count
+
+            if len(word_bytes_tuple) < 2:
                 continue
-            for i in range(len(word_bytes) - 1):
-                pair = (word_bytes[i], word_bytes[i + 1])
+            for i in range(len(word_bytes_tuple) - 1):
+                pair = (word_bytes_tuple[i], word_bytes_tuple[i + 1])
                 pair_counts[pair] += count
         end_time = datetime.datetime.now()
-        print(f'Time to get pairs from chunk: {end_time - start_time}')
+        # print(f'Time to get pairs from chunk: {end_time - start_time}')
 
-        return pair_counts
+        return (word_structures_chunk, pair_counts)
+
+
+    def train_merges(self, word_structures: dict, final_pair_counts: dict):
+        num_merges_needed = self.vocab_size - len(self.vocab)
+        if num_merges_needed <= 0:
+            print('Vocabulary size already met or exceeded. No merges needed.')
+            return 0
+
+        print(f'\n--- Starting BPE Merges (need {num_merges_needed}) ---')
+
+        for i in range(num_merges_needed):
+            # print(f'Starting merge {i + 1}/{num_merges_needed}...')
+            if not final_pair_counts:
+                print('No more pairs to merge. Stopping early.')
+                break
+
+            best_pair = max(final_pair_counts, key=lambda pair: (final_pair_counts[pair], pair))
+            # print(f'Best pair to merge: {best_pair} with count {final_pair_counts[best_pair]}')
+            # print(f' Best pair bytes: {self.vocab[best_pair[0]]} + {self.vocab[best_pair[1]]}')
+            # print(f' my token1_bytes: {self.vocab[best_pair[0]]}, token2_bytes: {self.vocab[best_pair[1]]}')
+            token1_bytes = self.vocab[best_pair[0]]
+            token2_bytes = self.vocab[best_pair[1]]
+            new_token_bytes = token1_bytes + token2_bytes
+            # print(f' New token bytes: {new_token_bytes}')
+            # print('=' * 20)
+
+
+            new_token_id = len(self.vocab)
+            self.vocab[new_token_id] = new_token_bytes
+            self.merges.append((token1_bytes, token2_bytes))
+
+            word_structures, final_pair_counts = self._merge_and_update_counts(
+                word_structures,
+                final_pair_counts,
+                best_pair,
+                new_token_id
+            )
+            # word_structures = self._merge_and_update_counts(
+            #     word_structures,
+            #     final_pair_counts,
+            #     best_pair,
+            #     new_token_id
+            # )
+            # print('New word structures after merge:')
+            # for word in word_structures:
+            #     print(f'Word: {word}, Count: {word_structures[word]}')
+
+            # if (i + 1) % 50 == 0:
+            #     print(f'  Merge {i + 1}/{num_merges_needed}: Merged {best_pair} -> {new_token_id} ({new_token_bytes})')
+
+        print(f'--- BPE training complete. Final vocabulary size: {len(self.vocab)} ---')
+
+
+
+    def _merge_and_update_counts(self, word_structures: dict, pair_counts: dict, best_pair: tuple,
+                                 new_token_id: int) -> tuple[dict, dict]:
+        byte_1, byte_2 = best_pair
+
+        # Accumulate pair count changes
+        pairs_to_decrement = Counter()
+        pairs_to_increment = Counter()
+        words_to_increment = Counter()
+        words_to_decrement = Counter()
+        # print(f'Merging pair: {byte_1} + {byte_2} into new token ID: {new_token_id}')
+        temp_dict_to_replace = {}
+        for word, count in word_structures.items():
+            # print(f'word: {word}, count: {count}')
+            if len(word) < 2:
+                continue
+            if byte_1 in word and byte_2 in word:
+                new_word, old_pairs, new_pairs = self._merge_word_with_index(word, best_pair, new_token_id)
+                if new_word != word:  # Only update if the word actually changed
+                    words_to_increment[new_word] += count
+                    words_to_decrement[word] += count
+
+                    for old_pair in old_pairs:
+                        pairs_to_decrement[old_pair] += count
+                    for new_pair in new_pairs:
+                        pairs_to_increment[new_pair] += count
+
+        for word in words_to_increment:
+            word_structures[word] = word_structures.get(word, 0) + words_to_increment[word]
+        for word in words_to_decrement:
+            del word_structures[word]
+        for pair in pairs_to_increment:
+            pair_counts[pair] += pairs_to_increment[pair]
+        for pair in pairs_to_decrement:
+            pair_counts[pair] -= pairs_to_decrement[pair]
+
+        del pair_counts[best_pair] # we merged this pair in all words, so remove it from counts
+
+        return word_structures, pair_counts
+
+    def _merge_word_with_index(self, word: tuple, best_pair: tuple, new_token_id: int) -> tuple[tuple, set, set]:
+        byte_1, byte_2 = best_pair
+
+        new_word = []
+        old_pairs = []
+        new_pairs = []
+
+        i = 0
+        while i < len(word):
+            if i < len(word) - 1 and (word[i], word[i + 1]) == best_pair:
+                # Found the pair to merge!
+
+                # If there's a token before, the pair (prev, byte_1) becomes (prev, new_token_id)
+                if i > 0:
+                    old_pairs.append((word[i - 1], byte_1))
+                    new_pairs.append((word[i - 1], new_token_id))
+
+                # If there's a token after, the pair (byte_2, next) becomes (new_token_id, next)
+                if i + 2 < len(word):
+                    old_pairs.append((byte_2, word[i + 2]))
+                    new_pairs.append((new_token_id, word[i + 2]))
+
+                # Add the merged token
+                new_word.append(new_token_id)
+                i += 2  # Skip both bytes of the merged pair
+            else:
+                new_word.append(word[i])
+                i += 1
+
+        return tuple(new_word), set(old_pairs), set(new_pairs)
+
+
+
+    # def _merge_and_update_counts(self, word_structures, pair_counts, best_pair, new_token_id)-> dict:
+    #     new_word_structures = {}
+    #     affected_words = {}  # Store {old_word: new_word} for words that changed
+    #
+    #     # --- Pass 1: Find all affected words and create their new structure ---
+    #     for word, count in word_structures.items():
+    #         if len(word) < 2:
+    #             new_word_structures[word] = count
+    #             continue
+    #
+    #         # Build the new word by replacing all instances of the best_pair
+    #         i = 0
+    #         new_word = []
+    #         has_changed = False
+    #         while i < len(word):
+    #             if i < len(word) - 1 and (word[i], word[i + 1]) == best_pair:
+    #                 new_word.append(new_token_id)
+    #                 i += 2
+    #                 has_changed = True
+    #             else:
+    #                 new_word.append(word[i])
+    #                 i += 1
+    #
+    #         if has_changed:
+    #             # This word was affected. Store the old and new versions.
+    #             affected_words[word] = tuple(new_word)
+    #         else:
+    #             # This word was not affected, so it carries over directly.
+    #             new_word_structures[word] = count
+    #
+    #     # --- Pass 2: Update counts and the final structure based on affected words ---
+    #     for old_word, new_word in affected_words.items():
+    #         count = word_structures[old_word]
+    #
+    #         # Decrement counts for all pairs in the old word
+    #         for i in range(len(old_word) - 1):
+    #             pair = (old_word[i], old_word[i + 1])
+    #             pair_counts[pair] -= count
+    #             if pair_counts[pair] == 0:
+    #                 del pair_counts[pair]
+    #
+    #         # Increment counts for all pairs in the new word
+    #         for i in range(len(new_word) - 1):
+    #             pair = (new_word[i], new_word[i + 1])
+    #             pair_counts[pair] = pair_counts.get(pair, 0) + count
+    #
+    #         # Add the new, merged word to the final structures, aggregating counts
+    #         new_word_structures[new_word] = new_word_structures.get(new_word, 0) + count
+    #
+    #     # The original pair has now been fully replaced and its count should be zero.
+    #     if best_pair in pair_counts:
+    #         del pair_counts[best_pair]
+    #
+    #     return new_word_structures
 
     def run_BPE(self):
         print(f'Number of actual chunks {len(self.data_chunks_boundaries)-1} chunks.')
@@ -129,32 +308,60 @@ class BPE:
         for start, end in zip(self.data_chunks_boundaries[:-1], self.data_chunks_boundaries[1:]):
             chunk_args.append((start, end))
 
-        print("\nStarting combined processing pool...")
+        print('Starting combined processing pool...')
         start_time = datetime.datetime.now()
         with mp.Pool(self.num_processes) as pool:
-            list_of_pair_counters = pool.map(self._process_chunk_and_get_pairs, chunk_args)
+            list_of_results = pool.map(self._process_chunk_and_get_pairs, chunk_args)
         end_time = datetime.datetime.now()
         print(f'Time to process all chunks and get pairs: {end_time - start_time}')
 
+        print('Combining results...')
         start_time = datetime.datetime.now()
+
+        # These will be the complete data structures you need for the merge loop
+        word_structures = {}
         final_pair_counts = Counter()
-        for counter in list_of_pair_counters:
-            final_pair_counts.update(counter)
+
+        for word_struct_chunk, pair_count_chunk in list_of_results:
+            for word, count in word_struct_chunk.items():
+                word_structures[word] = word_structures.get(word, 0) + count
+
+            final_pair_counts.update(pair_count_chunk)
+
         end_time = datetime.datetime.now()
-        print(f'Most common pairs: {final_pair_counts.most_common(15)}')
-        print(f'Time to combine all pair counts: {end_time - start_time}')
+        print(f'Time to combine all structures: {end_time - start_time}')
+
+        # print(f'Initial unique pairs: {len(final_pair_counts)}')
+
+        # print('='*20)
+        # print('Initial word structures:', word_structures)
+        print('\n')
+        # print(f'Top 15 initial pairs: {final_pair_counts.most_common(15)}')
+
+        self.train_merges(word_structures, final_pair_counts)
 
 
+def train_BPE_tokenizer(input_path: str, vocab_size: int, special_tokens: list[str]) -> tuple[
+    dict[int, bytes], list[tuple[bytes, bytes]]]:
+    # You can pass other parameters like num_processes if you want
+    tokenizer = BPE(input_path=input_path, vocab_size=vocab_size, special_tokens=special_tokens)
+
+    # Run the main training logic
+    tokenizer.run_BPE()  # This will call train_merges internally
+
+    # Return the final vocabulary and merges in the required format
+    return tokenizer.get_vocab(), tokenizer.merges
 
 
 if __name__ == '__main__':
     start = datetime.datetime.now()
-    # test = BPE(input_path='../data/debug_small_text.txt', vocab_size=256)
-    test = BPE(input_path='../data/owt_train.txt', vocab_size=256)
-    # print(test.get_vocab())
+    # test = BPE(input_path='../data/debug_small_text.txt', vocab_size=270)
+    test = BPE(input_path='../data/smallest.txt', vocab_size=270)
+    # test = BPE(input_path='../data/owt_train.txt', vocab_size=300)
     test.run_BPE()
     end = datetime.datetime.now()
     print(f'Total time: {end - start}')
+    # print(test.get_vocab())
 
 
 
