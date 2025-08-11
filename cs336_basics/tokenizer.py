@@ -3,6 +3,7 @@ import regex as re
 from collections.abc import Iterable, Iterator
 from functools import lru_cache
 import heapq
+import numpy as np
 from cs336_basics.train_bpe_tokenizer import train_bpe
 
 
@@ -306,6 +307,11 @@ class BPETokenizer:
         with open(file_name) as f:
             yield from self.encode_iterable(f)
 
+    def stream_sequence(self, file_name: str):
+        with open(file_name) as f:
+            while chunk := f.readline():
+                yield np.array(self.encode(chunk))
+
     def decode(self, ids: list[int]) -> str:
         output_bytes = b"".join(map(self.vocab.get, ids))
         return output_bytes.decode("utf-8", errors="replace")
@@ -392,7 +398,7 @@ class BPETokenizer:
 
 
 if __name__ == "__main__":
-    bpe = BPETokenizer.from_training("./data/TinyStoriesV2-GPT4-train.txt", 8192, ["<|endoftext|>"])
+    bpe = BPETokenizer.from_training("./data/TinyStoriesV2-GPT4-train.txt", 512, ["<|endoftext|>"])
     bpe.save(
         "./tokenizer/gpt2_vocab.json",
         "./tokenizer/gpt2_merges.txt",

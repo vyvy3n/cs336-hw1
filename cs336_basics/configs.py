@@ -10,10 +10,10 @@ class BaseConfig:
 
 @dataclass
 class ModelConfig(BaseConfig):
-    vocab_size: int = 8192  # 32768
-    context_length: int = 512  # 2048
-    d_model: int = 256  # 1024
-    num_heads: int = 8
+    vocab_size: int = 512  # 32768
+    context_length: int = 4  # 2048
+    d_model: int = 4  # 1024
+    num_heads: int = 2
     num_layers: int | None = None
     d_ff: int | None = None
     rope_theta: float = 10000.0
@@ -23,7 +23,7 @@ class ModelConfig(BaseConfig):
             self.d_ff = 4 * self.d_model
 
         if self.num_layers is None:
-            self.num_layers = self.d_model // 16  # 128
+            self.num_layers = max(self.d_model // 16, 1)  # 128
 
 
 @dataclass
@@ -45,9 +45,9 @@ class CosineSchedulerConfig(BaseConfig):
 
 @dataclass
 class TrainerConfig(BaseConfig):
-    epochs: int = 10  # 100
-    train_batch_size: int = 32
-    val_batch_size: int = 32
+    epochs: int = 10
+    train_batch_size: int = 2
+    val_batch_size: int = 4
     checkpoint_folder: str | Path = "./checkpointing"
     checkpoint_path: str | Path | None = None
     gradient_accumulation: int = 1
@@ -84,6 +84,8 @@ class End2EndConfig(BaseConfig):
                 self.device = f"cuda:{index}"
             else:
                 self.device = "cpu"
+        if self.sched.cosine_cycle_iters is None:
+            self.sched.cosine_cycle_iters = self.trainer.epochs * 2 // 3
 
 
 if __name__ == "__main__":

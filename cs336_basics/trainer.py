@@ -20,11 +20,11 @@ class Pipeline:
         self.config = config
         self.step: int = 0
         self.model = TransformerDecoder(**config.model.to_dict())
+        self.prepare_model()
         self.optim = AdamW(self.model.parameters(), **config.optim.to_dict())
         self.sched = CosineScheduler(self.optim, **config.sched.to_dict())
         self.token = BPETokenizer.from_vocab(**config.tokens.to_dict())
-
-        self.prepare_model()
+        self.load_state()
 
     def prepare_model(self):
         logging.info("Prepare Model.")
@@ -32,10 +32,44 @@ class Pipeline:
         self.model = self.model.to(self.config.device)
         logging.info("Tie token embedding and LM head weights.")
         self.model.tie_weights()
-        self.load_state()
 
-    def train(self, train_data_path: str):
-        pass
+    def train(self, train_data_path: str, val_data_path: str):
+        logging.info("Start Training")
+        bs = self.config.trainer.val_batch_size
+        cl = self.config.model.context_length
+        gr_acc = self.config.trainer.gradient_accumulation
+        epochs = self.config.trainer.epochs
+        device = self.config.device
+        self.model.train()
+        raw_data = self.token.stream_sequence(train_data_path)
+        len_data = sum(len(seq) for seq in tqdm(raw_data, "Count tokens"))
+        logging.info("token count %s", len_data)
+        bar = tqdm(desc="Train step", total=(len_data * epochs) // (bs * (cl + 1)))
+        for e in range(1, epochs + 1):
+            log_perplexity = torch.zeros(1, device=self.config.device)
+            raw_data = self.token.stream_sequence(train_data_path)
+            for i in range(1, len_data // (bs * (cl + 1)) + 1):
+                seq = next(raw_data)
+                if (e * i) < self.step or len(seq) < cl:
+                    continue
+                x, y = get_batch(seq, bs, cl, device)
+                self.optim.zero_grad()
+                loss = cross_entropy(self.model(x), y)
+                loss.backward()
+                log_perplexity += loss.detach()
+                if (i * e) % gr_acc == 0:
+                    self.optim.step()
+                    self.sched.step()
+                    self.step = e * i
+
+                bar.update()
+            self.save_state()
+            train_perplexity = bs * log_perplexity.item()
+            logging.info("Train log perplexity at epoch %s: %s", e, train_perplexity)
+            val_perplexity = self.valid(val_data_path)
+            logging.info("Valid log perplexity at epoch %s: %s", e, val_perplexity)
+
+        bar.close()
 
     @torch.inference_mode()
     def valid(self, val_data_path: str, stream: bool = False) -> float:
@@ -51,7 +85,7 @@ class Pipeline:
         log_perplexity = torch.zeros(1, device=self.config.device)
         sample = []
         tmp, raw_data = itertools.tee(raw_data)
-        bar = tqdm(desc="eval step", total=sum(1 for _ in tmp) // (bs * (cl + 1)))
+        bar = tqdm(desc="Eval step", total=sum(1 for _ in tmp) // (bs * (cl + 1)))
         del tmp
         for token in raw_data:
             sample.append(token)
@@ -65,7 +99,7 @@ class Pipeline:
                 log_perplexity += cross_entropy(self.model(x), y)
         log_perplexity *= bs
         bar.close()
-        return log_perplexity.item()  # .exp()
+        return log_perplexity.item()
 
     def save_state(self):
         logging.info("Save the state at step %s to %s", self.step, self.config.trainer.checkpoint_path)
@@ -92,12 +126,4 @@ class Pipeline:
 
 if __name__ == "__main__":
     pipe = Pipeline()
-    # print(pipe.check_forward())
-    # pipe.save_state()
-    # pipe.load_state()
-    # print(pipe.model.token_embeddings)
-    # print(pipe.model.lm_head)
-    # print(pipe.model.lm_head.weight.device)
-    pp = pipe.valid("data/TinyStoriesV2-GPT4-valid.txt")
-    print(pp)
-    # pipe.valid("data/TinyStoriesV2-GPT4-valid.txt", True)
+    pipe.train("data/TinyStoriesV2-GPT4-valid.txt", "data/TinyStoriesV2-GPT4-valid.txt")
