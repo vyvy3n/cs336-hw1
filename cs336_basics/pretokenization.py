@@ -1,18 +1,19 @@
+from functools import reduce
 import os
+import regex as re
 from typing import BinaryIO
 
+PRETOKENIZATION_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
 def find_chunk_boundaries(
     file: BinaryIO,
     desired_num_chunks: int,
-    split_special_token: bytes,
+    split_special_tokens: list[bytes],
 ) -> list[int]:
     """
     Chunk the file into parts that can be counted independently.
     May return fewer chunks if the boundaries end up overlapping.
     """
-    assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
-
     # Get total file size in bytes
     file.seek(0, os.SEEK_END)
     file_size = file.tell()
@@ -39,7 +40,11 @@ def find_chunk_boundaries(
                 break
 
             # Find the special token in the mini chunk
-            found_at = mini_chunk.find(split_special_token)
+            found_at = -1
+            for token in split_special_tokens:
+                found_at = mini_chunk.find(token)
+                if found_at != -1:
+                    break
             if found_at != -1:
                 chunk_boundaries[bi] = initial_position + found_at
                 break
@@ -49,14 +54,34 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
 
 
-## Usage
-with open(..., "rb") as f:
-    num_processes = 4
-    boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
+def count_pretokens(
+    chunk: str
+) -> dict[tuple[bytes], int]:
+    ret = {}
+    for pretoken in re.finditer(PRETOKENIZATION_PATTERN, chunk):
+        s = pretoken.group(0).encode("utf-8")
+        if s in ret:
+            ret[s] += 1
+        else:
+            ret[s] = 1
+    return ret
 
-    # The following is a serial implementation, but you can parallelize this
-    # by sending each start/end pair to a set of processes.
-    for start, end in zip(boundaries[:-1], boundaries[1:]):
-        f.seek(start)
-        chunk = f.read(end - start).decode("utf-8", errors="ignore")
-        # Run pre-tokenization on your chunk and store the counts for each pre-token
+
+def merge_pretoken_counts(
+    d1: dict[tuple[bytes]],
+    d2: dict[tuple[bytes]],
+) -> dict[tuple[bytes], int]:
+    for k, v in d2.items():
+        if k in d1:
+            d1[k] += v
+        else:
+            d1[k] = v
+    return d1
+
+
+def get_pretokenizaiton_counts(
+    chunk: str,
+    special_tokens: list[str],
+) -> dict[tuple[bytes], int]:
+    chunk_splitted = re.split('|'.join(special_tokens), chunk)
+    return reduce(merge_pretoken_counts, map(count_pretokens, chunk_splitted))
