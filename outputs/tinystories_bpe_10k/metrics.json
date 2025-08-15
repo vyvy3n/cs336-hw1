@@ -1,0 +1,9 @@
+{
+  "time_sec": 471.45,
+  "time_hr": 0.131,
+  "max_rss_mb": 94.6,
+  "vocab_size": 10000,
+  "num_merges": 9743,
+  "longest_token_id": 7160,
+  "longest_token_len": 15
+}
