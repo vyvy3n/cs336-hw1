@@ -139,9 +139,9 @@ def main():
     )
 
     parser.add_argument(
-        "--use-optimization",
+        "--disable-optimization",
         action="store_true", 
-        help="Use optimized heap-based BPE algorithm for significantly faster training"
+        help="Disable optimized heap-based BPE algorithm (optimization is enabled by default)"
     )
 
     # Parse arguments
@@ -200,8 +200,10 @@ def main():
             print(f"  Will save pretokenization results to: {pretokenization_path}")
         if args.load_pretokenization:
             print(f"  Will load pretokenization results from: {pretokenization_path}")
-        if args.use_optimization:
+        if not args.disable_optimization:
             print(f"  Using optimized heap-based BPE algorithm")
+        else:
+            print(f"  Using non-optimized BPE algorithm")
         if args.profile:
             print(f"  Profiling enabled: SVG will be generated")
         print()
@@ -214,7 +216,7 @@ def main():
             stop_at_merge_num=args.stop_at_merge_num,
             save_pretokenization_path=save_pretokenization_path,
             load_pretokenization_path=load_pretokenization_path,
-            use_optimization=args.use_optimization,
+            use_optimization=not args.disable_optimization,
             debug=False
         )
         execution_time = time.time() - start_time
