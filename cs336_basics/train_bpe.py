@@ -357,22 +357,12 @@ class OptimizedBPEMerger:
         self._build_initial_pair_tracking()
 
         if self.debug:
-            total_pairs = sum(len(self._extract_pairs(self.tokens_list[i])) * self.tokens_counts[i] 
+            total_pairs = sum(max(0, len(self.tokens_list[i]) - 1) * self.tokens_counts[i] 
                             for i in range(len(self.tokens_list)) if self.tokens_active[i])
             print(f"   📊 Total pair instances: {total_pairs:,}")
             print(f"   📊 Unique pairs: {len(self.pair_counts):,}")
             print(f"   📊 Token indices: {len(self.tokens_list):,}")
 
-    def _extract_pairs(self, token_tuple: tuple) -> List[tuple]:
-        """Extract all adjacent pairs from a token - optimized version."""
-        token_len = len(token_tuple)
-        if token_len < 2:
-            return []
-        # Inline the loop to avoid list comprehension overhead
-        pairs = []
-        for i in range(token_len - 1):
-            pairs.append((token_tuple[i], token_tuple[i+1]))
-        return pairs
 
     def _build_initial_pair_tracking(self):
         """Build initial pair frequency tracking using indices."""
@@ -390,10 +380,13 @@ class OptimizedBPEMerger:
             token_tuple = self.tokens_list[token_idx]
             count = self.tokens_counts[token_idx]
 
-            pairs = self._extract_pairs(token_tuple)
-            for pair in pairs:
-                self.pair_counts[pair] += count
-                self.pair_positions[pair].add(token_idx)
+            # Inline pair extraction to avoid 6.6M+ function calls
+            token_len = len(token_tuple)
+            if token_len >= 2:
+                for i in range(token_len - 1):
+                    pair = (token_tuple[i], token_tuple[i+1])
+                    self.pair_counts[pair] += count
+                    self.pair_positions[pair].add(token_idx)
 
         # Build initial heap from all pairs
         for pair, count in self.pair_counts.items():
@@ -489,8 +482,25 @@ class OptimizedBPEMerger:
             old_token_tuple = self.tokens_list[token_idx]
             count = self.tokens_counts[token_idx]
 
-            # Create new token by performing the merge
-            new_token_tuple = self._perform_merge_in_token(old_token_tuple, merge_pair, new_token)
+            # Inline merge operation to avoid 2.6M+ function calls
+            old_token_len = len(old_token_tuple)
+            if old_token_len < 2:
+                new_token_tuple = old_token_tuple
+            else:
+                # Inline the merge logic for maximum performance
+                result = []
+                merge_first, merge_second = merge_pair
+                i = 0
+                while i < old_token_len:
+                    # Check if we can merge at current position (avoid tuple creation)
+                    if (i < old_token_len - 1 and 
+                        old_token_tuple[i] == merge_first and old_token_tuple[i+1] == merge_second):
+                        result.append(new_token)
+                        i += 2  # Skip both parts of the merged pair
+                    else:
+                        result.append(old_token_tuple[i])
+                        i += 1
+                new_token_tuple = tuple(result)
 
             # Batch collect old pairs to remove
             old_token_len = len(old_token_tuple)
@@ -583,28 +593,6 @@ class OptimizedBPEMerger:
 
         return new_idx
 
-    def _perform_merge_in_token(self, token_tuple: tuple, merge_pair: tuple, new_token: bytes) -> tuple:
-        """Perform merge operation within a single token - optimized version."""
-        token_len = len(token_tuple)
-        if token_len < 2:
-            return token_tuple
-
-        # Pre-allocate result list for better performance
-        result = []
-        merge_first, merge_second = merge_pair
-        i = 0
-
-        while i < token_len:
-            # Check if we can merge at current position (avoid tuple creation)
-            if (i < token_len - 1 and 
-                token_tuple[i] == merge_first and token_tuple[i+1] == merge_second):
-                result.append(new_token)
-                i += 2  # Skip both parts of the merged pair
-            else:
-                result.append(token_tuple[i])
-                i += 1
-
-        return tuple(result)
 
     def perform_optimized_merges(
         self, 
