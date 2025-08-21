@@ -335,6 +335,8 @@ def train_bpe(
             These strings will never be split into multiple tokens, and will always be
             kept as a single token. If these special tokens occur in the `input_path`,
             they are treated as any other string.
+        save_pretokenization_path (str | os.PathLike, optional): Path to save pretokenization results.
+        load_pretokenization_path (str | os.PathLike, optional): Path to load pretokenization results from.
 
     Returns:
         tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
@@ -349,11 +351,28 @@ def train_bpe(
     pretokenizer_name = kwargs.get("pretokenizer_name", "default")
     debug = kwargs.get("debug", False)
     stop_at_merge_num = kwargs.get("stop_at_merge_num", None)
+    save_pretokenization_path = kwargs.get("save_pretokenization_path", None)
+    load_pretokenization_path = kwargs.get("load_pretokenization_path", None)
+
     if stop_at_merge_num is not None and not isinstance(stop_at_merge_num, int):
         raise ValueError("stop_at_merge_num must be an integer or None")
 
-    # Pretokenize the corpus
-    tokens_counts: dict[tuple, int] = pretokenize_corpus(input_path, pretokenizer_name, special_tokens, debug)
+    # Pretokenize the corpus or load from cache
+    if load_pretokenization_path is not None:
+        print(f"Loading pretokenization results from {load_pretokenization_path}")
+        with open(load_pretokenization_path, "rb") as f:
+            tokens_counts: dict[tuple, int] = pickle.load(f)
+        print(f"Loaded {len(tokens_counts)} unique token types")
+    else:
+        tokens_counts: dict[tuple, int] = pretokenize_corpus(input_path, pretokenizer_name, special_tokens, debug)
+        
+        # Save pretokenization results if path provided
+        if save_pretokenization_path is not None:
+            print(f"Saving pretokenization results to {save_pretokenization_path}")
+            os.makedirs(os.path.dirname(save_pretokenization_path), exist_ok=True)
+            with open(save_pretokenization_path, "wb") as f:
+                pickle.dump(tokens_counts, f)
+            print(f"Saved {len(tokens_counts)} unique token types")
 
     # Create the vocabulary and merges based on the token counts
     vocab: dict[bytes, int] = {bytes([i]): i for i in range(256)}  # Initial vocabulary with single-byte tokens

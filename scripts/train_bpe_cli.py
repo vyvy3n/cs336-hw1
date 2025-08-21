@@ -126,6 +126,18 @@ def main():
         help="Enable profiling of the training process and generate SVG visualization"
     )
 
+    parser.add_argument(
+        "--save-pretokenization",
+        action="store_true",
+        help="Save pretokenization results to a pickle file for later reuse"
+    )
+
+    parser.add_argument(
+        "--load-pretokenization", 
+        action="store_true",
+        help="Load pretokenization results from a pickle file instead of recomputing"
+    )
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -148,11 +160,26 @@ def main():
         print(f"Error: Invalid special tokens JSON: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Validate pretokenization flags
+    if args.save_pretokenization and args.load_pretokenization:
+        print("Error: Cannot use both --save-pretokenization and --load-pretokenization flags simultaneously.", file=sys.stderr)
+        sys.exit(1)
+
     # Create output directory if it doesn't exist
     try:
         os.makedirs(args.output_dir, exist_ok=True)
     except OSError as e:
         print(f"Error: Could not create output directory '{args.output_dir}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Set up pretokenization paths
+    pretokenization_path = os.path.join(args.output_dir, "pretokenization.pickle")
+    save_pretokenization_path = pretokenization_path if args.save_pretokenization else None
+    load_pretokenization_path = pretokenization_path if args.load_pretokenization else None
+
+    # Validate load path exists if loading
+    if args.load_pretokenization and not os.path.exists(pretokenization_path):
+        print(f"Error: Pretokenization file '{pretokenization_path}' does not exist. Cannot load pretokenization results.", file=sys.stderr)
         sys.exit(1)
 
     # Train the BPE tokenizer
@@ -163,6 +190,10 @@ def main():
         print(f"  Special tokens: {special_tokens}")
         print(f"  Output directory: {args.output_dir}")
         print(f"  Stop at merge number: {args.stop_at_merge_num if args.stop_at_merge_num is not None else 'None'}")
+        if args.save_pretokenization:
+            print(f"  Will save pretokenization results to: {pretokenization_path}")
+        if args.load_pretokenization:
+            print(f"  Will load pretokenization results from: {pretokenization_path}")
         if args.profile:
             print(f"  Profiling enabled: SVG will be generated")
         print()
@@ -173,6 +204,8 @@ def main():
             vocab_size=args.vocab_size,
             special_tokens=special_tokens,
             stop_at_merge_num=args.stop_at_merge_num,
+            save_pretokenization_path=save_pretokenization_path,
+            load_pretokenization_path=load_pretokenization_path,
         )
         execution_time = time.time() - start_time
         actual_vocab_size = len(vocab)
