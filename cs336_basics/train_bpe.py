@@ -364,11 +364,15 @@ class OptimizedBPEMerger:
             print(f"   📊 Token indices: {len(self.tokens_list):,}")
 
     def _extract_pairs(self, token_tuple: tuple) -> List[tuple]:
-        """Extract all adjacent pairs from a token."""
-        if len(token_tuple) < 2:
+        """Extract all adjacent pairs from a token - optimized version."""
+        token_len = len(token_tuple)
+        if token_len < 2:
             return []
-        return [(token_tuple[i], token_tuple[i+1]) 
-                for i in range(len(token_tuple) - 1)]
+        # Inline the loop to avoid list comprehension overhead
+        pairs = []
+        for i in range(token_len - 1):
+            pairs.append((token_tuple[i], token_tuple[i+1]))
+        return pairs
 
     def _build_initial_pair_tracking(self):
         """Build initial pair frequency tracking using indices."""
@@ -453,6 +457,7 @@ class OptimizedBPEMerger:
     def update_tokens_incremental(self, merge_pair: tuple, new_token: bytes) -> int:
         """
         Update tokens incrementally - batch process affected tokens for efficiency.
+        Major optimization: batch all pair tracking updates to minimize set operations.
 
         Returns:
             Number of tokens that were modified.
@@ -470,6 +475,12 @@ class OptimizedBPEMerger:
         tokens_to_add = []  # [(new_token_tuple, count), ...]
         indices_to_deactivate = []
 
+        # Batch tracking: collect all pair changes before applying them
+        pairs_to_remove = defaultdict(list)  # pair -> [count_delta_1, count_delta_2, ...]
+        pairs_to_add = defaultdict(list)     # pair -> [count_delta_1, count_delta_2, ...]
+        indices_to_remove = defaultdict(set)  # pair -> {idx1, idx2, ...}
+        indices_to_add = defaultdict(list)    # pair -> [(idx, count), ...]
+
         # First pass: collect all changes without modifying data structures
         for token_idx in affected_indices:
             if not self.tokens_active[token_idx]:
@@ -481,60 +492,112 @@ class OptimizedBPEMerger:
             # Create new token by performing the merge
             new_token_tuple = self._perform_merge_in_token(old_token_tuple, merge_pair, new_token)
 
+            # Batch collect old pairs to remove
+            old_token_len = len(old_token_tuple)
+            if old_token_len >= 2:
+                for i in range(old_token_len - 1):
+                    pair = (old_token_tuple[i], old_token_tuple[i+1])
+                    pairs_to_remove[pair].append(-count)
+                    indices_to_remove[pair].add(token_idx)
+
             tokens_to_add.append((new_token_tuple, count))
             indices_to_deactivate.append(token_idx)
             tokens_modified += 1
 
-        # Second pass: batch remove old tokens from tracking
+        # Second pass: deactivate old tokens (without updating pair tracking yet)
         for token_idx in indices_to_deactivate:
-            self._remove_token_from_tracking_by_index(token_idx)
             self.tokens_active[token_idx] = False
 
-        # Third pass: batch add new tokens
+        # Third pass: add new tokens and collect their pair updates
+        new_indices = []
         for new_token_tuple, count in tokens_to_add:
-            self._add_new_token(new_token_tuple, count)
+            new_idx = len(self.tokens_list)
+            self.tokens_list.append(new_token_tuple)
+            self.tokens_counts.append(count)
+            self.tokens_active.append(True)
+
+            # Batch collect new pairs to add
+            new_token_len = len(new_token_tuple)
+            if new_token_len >= 2:
+                for i in range(new_token_len - 1):
+                    pair = (new_token_tuple[i], new_token_tuple[i+1])
+                    pairs_to_add[pair].append(count)
+                    indices_to_add[pair].append((new_idx, count))
+
+            new_indices.append(new_idx)
+
+        # Fourth pass: batch apply all pair tracking updates
+        # Remove old pair tracking
+        for pair, count_deltas in pairs_to_remove.items():
+            total_delta = sum(count_deltas)
+            if total_delta != 0:
+                self._update_pair_count(pair, total_delta)
+            # Remove indices from position tracking
+            for idx in indices_to_remove[pair]:
+                self.pair_positions[pair].discard(idx)
+
+        # Add new pair tracking
+        for pair, count_deltas in pairs_to_add.items():
+            total_delta = sum(count_deltas)
+            if total_delta != 0:
+                self._update_pair_count(pair, total_delta)
+            # Add indices to position tracking
+            for idx, count in indices_to_add[pair]:
+                self.pair_positions[pair].add(idx)
 
         self.stats['tokens_scanned'] += tokens_modified
         return tokens_modified
 
     def _remove_token_from_tracking_by_index(self, token_idx: int):
-        """Remove a token from pair tracking by index."""
+        """Remove a token from pair tracking by index - optimized version."""
         if not self.tokens_active[token_idx]:
             return
 
         token_tuple = self.tokens_list[token_idx]
         count = self.tokens_counts[token_idx]
+        token_len = len(token_tuple)
 
-        pairs = self._extract_pairs(token_tuple)
-        for pair in pairs:
-            # Remove this index from the pair's position set (O(1) operation)
-            self.pair_positions[pair].discard(token_idx)
-            self._update_pair_count(pair, -count)
+        # Inline pair extraction and processing to reduce function calls
+        if token_len >= 2:
+            for i in range(token_len - 1):
+                pair = (token_tuple[i], token_tuple[i+1])
+                # Remove this index from the pair's position set
+                pair_positions = self.pair_positions[pair]
+                pair_positions.discard(token_idx)
+                self._update_pair_count(pair, -count)
 
     def _add_new_token(self, token_tuple: tuple, count: int) -> int:
-        """Add a new token to the end of the token lists."""
+        """Add a new token to the end of the token lists - optimized version."""
         new_idx = len(self.tokens_list)
         self.tokens_list.append(token_tuple)
         self.tokens_counts.append(count)
         self.tokens_active.append(True)
 
-        # Add to pair tracking
-        pairs = self._extract_pairs(token_tuple)
-        for pair in pairs:
-            self.pair_positions[pair].add(new_idx)
-            self._update_pair_count(pair, count)
+        # Inline pair extraction and processing to reduce function calls
+        token_len = len(token_tuple)
+        if token_len >= 2:
+            for i in range(token_len - 1):
+                pair = (token_tuple[i], token_tuple[i+1])
+                self.pair_positions[pair].add(new_idx)
+                self._update_pair_count(pair, count)
 
         return new_idx
 
     def _perform_merge_in_token(self, token_tuple: tuple, merge_pair: tuple, new_token: bytes) -> tuple:
-        """Perform merge operation within a single token."""
+        """Perform merge operation within a single token - optimized version."""
+        token_len = len(token_tuple)
+        if token_len < 2:
+            return token_tuple
+
+        # Pre-allocate result list for better performance
         result = []
+        merge_first, merge_second = merge_pair
         i = 0
 
-        while i < len(token_tuple):
-            # Check if we can merge at current position
-            if (i < len(token_tuple) - 1 and 
-                (token_tuple[i], token_tuple[i+1]) == merge_pair):
+        while i < token_len:
+            # Check if we can merge at current position (avoid tuple creation)
+            if (i < token_len - 1 and 
+                token_tuple[i] == merge_first and token_tuple[i+1] == merge_second):
                 result.append(new_token)
                 i += 2  # Skip both parts of the merged pair
             else:
