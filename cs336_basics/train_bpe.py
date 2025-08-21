@@ -8,6 +8,7 @@ from multiprocessing import Pool
 
 import regex as re
 
+MERGE_LOG_INTERVAL = 100 
 
 class MaxHeapItem:
     """Wrapper for heap items that implements max-heap with proper tie-breaking."""
@@ -219,8 +220,6 @@ def _find_most_common_pair(
     # TODO: double check if the tie breaker function is implemented correctly.
     most_common_pair = max(bytepair_counts, key=lambda bytepair: (bytepair_counts[bytepair], bytepair))
 
-    # Log merge results every 50 steps or on first/last steps
-    MERGE_LOG_INTERVAL = 50  # Can be changed as needed
     if merge_step == 1 or merge_step % MERGE_LOG_INTERVAL == 0:
         print(f"Merge step {merge_step} done: Most common pair is {most_common_pair} with count {bytepair_counts[most_common_pair]}")
 
@@ -317,9 +316,6 @@ class OptimizedBPEMerger:
     3. Cached pair frequencies (no recomputation)
     4. Minimal memory allocation
     """
-
-    # Configuration constants
-    MERGE_LOG_INTERVAL = 50  # Print merge step results every N merges
 
     def __init__(self, debug: bool = False):
         self.debug = debug
@@ -439,7 +435,7 @@ class OptimizedBPEMerger:
             # Check if this heap entry is still valid (lazy deletion)
             if self.heap_valid.get(pair, False) and self.pair_counts[pair] == count:
                 # Log merge results every N steps or on first step (configurable interval)
-                if merge_step == 1 or merge_step % self.MERGE_LOG_INTERVAL == 0:
+                if merge_step == 1 or merge_step % MERGE_LOG_INTERVAL == 0:
                     print(f"Merge step {merge_step} done: Most common pair is {pair} with count {count}")
 
                 if self.debug:
