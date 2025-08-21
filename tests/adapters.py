@@ -604,7 +604,8 @@ def run_train_bpe(
     vocab, merges = train_bpe(
         input_path=input_path, 
         vocab_size=vocab_size, 
-        special_tokens=special_tokens, 
+        special_tokens=special_tokens,
+        use_optimization=True, 
         **kwargs)
     
     # Log the results

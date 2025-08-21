@@ -91,21 +91,21 @@ def main():
         required=True,
         help="Path to the input corpus file"
     )
-    
+
     parser.add_argument(
         "--vocab-size", 
         type=int, 
         required=True,
         help="Target vocabulary size"
     )
-    
+
     parser.add_argument(
         "--output-dir", 
         type=str, 
         required=True,
         help="Directory to save vocab.pkl and merges.pkl"
     )
-    
+
     parser.add_argument(
         "--special-tokens", 
         type=str, 
@@ -136,6 +136,12 @@ def main():
         "--load-pretokenization", 
         action="store_true",
         help="Load pretokenization results from a pickle file instead of recomputing"
+    )
+
+    parser.add_argument(
+        "--use-optimization",
+        action="store_true", 
+        help="Use optimized heap-based BPE algorithm for significantly faster training"
     )
 
     # Parse arguments
@@ -194,6 +200,8 @@ def main():
             print(f"  Will save pretokenization results to: {pretokenization_path}")
         if args.load_pretokenization:
             print(f"  Will load pretokenization results from: {pretokenization_path}")
+        if args.use_optimization:
+            print(f"  Using optimized heap-based BPE algorithm")
         if args.profile:
             print(f"  Profiling enabled: SVG will be generated")
         print()
@@ -206,6 +214,8 @@ def main():
             stop_at_merge_num=args.stop_at_merge_num,
             save_pretokenization_path=save_pretokenization_path,
             load_pretokenization_path=load_pretokenization_path,
+            use_optimization=args.use_optimization,
+            debug=False
         )
         execution_time = time.time() - start_time
         actual_vocab_size = len(vocab)

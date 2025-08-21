@@ -1,10 +1,33 @@
 import os
 import pickle
+import heapq
+import time
 from collections import defaultdict
-from typing import BinaryIO
+from typing import BinaryIO, Dict, Tuple, List, Optional, Set
 from multiprocessing import Pool
 
 import regex as re
+
+
+class MaxHeapItem:
+    """Wrapper for heap items that implements max-heap with proper tie-breaking."""
+
+    def __init__(self, count: int, pair: Tuple[bytes, bytes]):
+        self.count = count
+        self.pair = pair
+
+    def __lt__(self, other):
+        # For max-heap, we want larger counts first, so reverse the comparison
+        # For tie-breaking, we want lexicographically larger pairs first
+        if self.count != other.count:
+            return self.count > other.count  # Larger count wins (max-heap)
+        return self.pair > other.pair  # Larger pair wins ties
+
+    def __eq__(self, other):
+        return self.count == other.count and self.pair == other.pair
+
+    def __repr__(self):
+        return f"MaxHeapItem(count={self.count}, pair={self.pair})"
 
 def get_num_processes() -> int:
     """Get the number of processes to use from environment variable or default to 4."""
@@ -116,7 +139,7 @@ def pretokenize_corpus(
 ) -> dict[tuple, int]:
     """
     Pretokenize a corpus and return token counts.
-    
+
     Args:
         input_path: Path to the input corpus file
         pretokenizer: Compiled regex pattern for pretokenization
@@ -162,7 +185,7 @@ def pretokenize_corpus(
             if i >= 9:  # Only show first 10
                 break
         print()
-    
+
     return tokens_counts
 
 def _find_most_common_pair(
@@ -172,12 +195,12 @@ def _find_most_common_pair(
 ) -> tuple[bytes, bytes] | None:
     """
     Find the most common byte pair in the token counts with optional debug printing.
-    
+
     Args:
         tokens_counts: Dictionary mapping tuples of bytes to their counts
         merge_step: Current merge step number (for debug output)
         debug: Whether to print debug information
-        
+
     Returns:
         Most common byte pair, or None if no pairs found
     """
@@ -217,13 +240,13 @@ def _update_vocab_with_merge(
 ) -> tuple[bytes, int]:
     """
     Form new token from merge pair and update vocabulary.
-    
+
     Args:
         most_common_pair: The pair of bytes to merge
         vocab: Current vocabulary dictionary
         token_id: Next available token ID
         merges: List of merges to append to
-        
+
     Returns:
         Tuple of (new_token, updated_token_id)
     """
@@ -236,7 +259,7 @@ def _update_vocab_with_merge(
     if new_token not in vocab:
         vocab[new_token] = token_id
         token_id += 1
-    
+
     return new_token, token_id
 
 def _update_tokens_counts(
@@ -246,12 +269,12 @@ def _update_tokens_counts(
 ) -> dict[tuple, int]:
     """
     Update token counts by merging occurrences of the most common pair.
-    
+
     Args:
         tokens_counts: Current token counts dictionary
         most_common_pair: The pair of bytes that was merged
         new_token: The new token created from the merge
-        
+
     Returns:
         Updated token counts dictionary
     """
@@ -280,12 +303,334 @@ def _update_tokens_counts(
 
     return new_tokens_counts
 
+
+class OptimizedBPEMerger:
+    """
+    High-performance BPE merger using advanced data structures and caching.
+
+    Key Optimizations:
+    1. Simplified heap management with lazy deletion
+    2. Incremental token updates (only affected tokens) 
+    3. Cached pair frequencies (no recomputation)
+    4. Minimal memory allocation
+    """
+
+    def __init__(self, debug: bool = False):
+        self.debug = debug
+
+        # Index-based data structures for better performance
+        self.tokens_list: List[tuple] = []                    # [token_tuple, ...]
+        self.tokens_counts: List[int] = []                    # [count, ...]  
+        self.tokens_active: List[bool] = []                   # [is_active, ...] for soft deletion
+
+        # Track which token indices contain each pair (use sets for O(1) operations)
+        self.pair_positions: Dict[tuple, Set[int]] = defaultdict(set)
+        self.pair_counts: Dict[tuple, int] = defaultdict(int)
+
+        # Max-heap for O(log P) pair selection using custom heap items
+        self.pair_heap: List[MaxHeapItem] = []
+        self.heap_valid: Dict[tuple, bool] = {}               # Track valid heap entries
+
+        # Performance tracking
+        self.stats = {
+            'total_merges': 0,
+            'tokens_scanned': 0,
+            'pairs_updated': 0,
+            'heap_operations': 0,
+        }
+
+    def initialize(self, tokens_counts: Dict[tuple, int]):
+        """Initialize the optimizer with initial token counts."""
+        if self.debug:
+            print(f"🚀 Initializing optimized BPE with {len(tokens_counts)} token types")
+
+        # Convert dictionary to index-based lists
+        self.tokens_list.clear()
+        self.tokens_counts.clear() 
+        self.tokens_active.clear()
+
+        for token_tuple, count in tokens_counts.items():
+            self.tokens_list.append(token_tuple)
+            self.tokens_counts.append(count)
+            self.tokens_active.append(True)
+
+        self._build_initial_pair_tracking()
+
+        if self.debug:
+            total_pairs = sum(len(self._extract_pairs(self.tokens_list[i])) * self.tokens_counts[i] 
+                            for i in range(len(self.tokens_list)) if self.tokens_active[i])
+            print(f"   📊 Total pair instances: {total_pairs:,}")
+            print(f"   📊 Unique pairs: {len(self.pair_counts):,}")
+            print(f"   📊 Token indices: {len(self.tokens_list):,}")
+
+    def _extract_pairs(self, token_tuple: tuple) -> List[tuple]:
+        """Extract all adjacent pairs from a token."""
+        if len(token_tuple) < 2:
+            return []
+        return [(token_tuple[i], token_tuple[i+1]) 
+                for i in range(len(token_tuple) - 1)]
+
+    def _build_initial_pair_tracking(self):
+        """Build initial pair frequency tracking using indices."""
+        # Clear existing data
+        self.pair_counts.clear()
+        self.pair_positions.clear()
+        self.pair_heap.clear()
+        self.heap_valid.clear()
+
+        # Build pair frequency map and position tracking using token indices
+        for token_idx in range(len(self.tokens_list)):
+            if not self.tokens_active[token_idx]:
+                continue
+
+            token_tuple = self.tokens_list[token_idx]
+            count = self.tokens_counts[token_idx]
+
+            pairs = self._extract_pairs(token_tuple)
+            for pair in pairs:
+                self.pair_counts[pair] += count
+                self.pair_positions[pair].add(token_idx)
+
+        # Build initial heap from all pairs
+        for pair, count in self.pair_counts.items():
+            if count > 0:
+                heap_item = MaxHeapItem(count, pair)
+                heapq.heappush(self.pair_heap, heap_item)
+                self.heap_valid[pair] = True
+
+    def _update_pair_count(self, pair: tuple, count_delta: int):
+        """Update a pair's count and maintain heap invariants."""
+        old_count = self.pair_counts[pair]
+        new_count = old_count + count_delta
+
+        if new_count <= 0:
+            self.pair_counts[pair] = 0
+            # Mark heap entry as invalid instead of removing (lazy deletion)
+            self.heap_valid[pair] = False
+        else:
+            self.pair_counts[pair] = new_count
+            # Add new entry to heap (old entries will be lazily removed) 
+            heap_item = MaxHeapItem(new_count, pair)
+            heapq.heappush(self.pair_heap, heap_item)
+            self.heap_valid[pair] = True
+            self.stats['heap_operations'] += 1
+
+        self.stats['pairs_updated'] += 1
+
+    def find_most_common_pair(self, merge_step: int = 0) -> Optional[tuple]:
+        """
+        Find the most common pair using custom heap for O(log P) performance.
+
+        Args:
+            merge_step: Current merge step number (for logging)
+
+        Returns:
+            Most frequent pair, or None if no valid pairs remain.
+        """
+        # Use heap with lazy deletion for O(log P) performance
+        while self.pair_heap:
+            heap_item = heapq.heappop(self.pair_heap)
+            pair = heap_item.pair
+            count = heap_item.count
+
+            # Check if this heap entry is still valid (lazy deletion)
+            if self.heap_valid.get(pair, False) and self.pair_counts[pair] == count:
+                # Always print merge step logging (same format as naive algorithm)
+                print(f"Merge step {merge_step} done: Most common pair is {pair} with count {count}")
+
+                if self.debug:
+                    pair_str = f"({pair[0].decode('utf-8', errors='replace')}, {pair[1].decode('utf-8', errors='replace')})"
+                    print(f"   🎯 Selected pair: {pair_str} (count: {count})")
+
+                return pair
+
+            # Invalid entry, continue to next
+            self.stats['heap_operations'] += 1
+
+        # No valid pairs found
+        return None
+
+    def update_tokens_incremental(self, merge_pair: tuple, new_token: bytes) -> int:
+        """
+        Update tokens incrementally - batch process affected tokens for efficiency.
+
+        Returns:
+            Number of tokens that were modified.
+        """
+        if merge_pair not in self.pair_positions:
+            return 0
+
+        affected_indices = list(self.pair_positions[merge_pair])  # Convert set to list for iteration
+        tokens_modified = 0
+
+        if self.debug:
+            print(f"   🔄 Updating {len(affected_indices)} affected tokens")
+
+        # Batch collect all changes first
+        tokens_to_add = []  # [(new_token_tuple, count), ...]
+        indices_to_deactivate = []
+
+        # First pass: collect all changes without modifying data structures
+        for token_idx in affected_indices:
+            if not self.tokens_active[token_idx]:
+                continue  # Token already processed/inactive
+
+            old_token_tuple = self.tokens_list[token_idx]
+            count = self.tokens_counts[token_idx]
+
+            # Create new token by performing the merge
+            new_token_tuple = self._perform_merge_in_token(old_token_tuple, merge_pair, new_token)
+
+            tokens_to_add.append((new_token_tuple, count))
+            indices_to_deactivate.append(token_idx)
+            tokens_modified += 1
+
+        # Second pass: batch remove old tokens from tracking
+        for token_idx in indices_to_deactivate:
+            self._remove_token_from_tracking_by_index(token_idx)
+            self.tokens_active[token_idx] = False
+
+        # Third pass: batch add new tokens
+        for new_token_tuple, count in tokens_to_add:
+            self._add_new_token(new_token_tuple, count)
+
+        self.stats['tokens_scanned'] += tokens_modified
+        return tokens_modified
+
+    def _remove_token_from_tracking_by_index(self, token_idx: int):
+        """Remove a token from pair tracking by index."""
+        if not self.tokens_active[token_idx]:
+            return
+
+        token_tuple = self.tokens_list[token_idx]
+        count = self.tokens_counts[token_idx]
+
+        pairs = self._extract_pairs(token_tuple)
+        for pair in pairs:
+            # Remove this index from the pair's position set (O(1) operation)
+            self.pair_positions[pair].discard(token_idx)
+            self._update_pair_count(pair, -count)
+
+    def _add_new_token(self, token_tuple: tuple, count: int) -> int:
+        """Add a new token to the end of the token lists."""
+        new_idx = len(self.tokens_list)
+        self.tokens_list.append(token_tuple)
+        self.tokens_counts.append(count)
+        self.tokens_active.append(True)
+
+        # Add to pair tracking
+        pairs = self._extract_pairs(token_tuple)
+        for pair in pairs:
+            self.pair_positions[pair].add(new_idx)
+            self._update_pair_count(pair, count)
+
+        return new_idx
+
+    def _perform_merge_in_token(self, token_tuple: tuple, merge_pair: tuple, new_token: bytes) -> tuple:
+        """Perform merge operation within a single token."""
+        result = []
+        i = 0
+
+        while i < len(token_tuple):
+            # Check if we can merge at current position
+            if (i < len(token_tuple) - 1 and 
+                (token_tuple[i], token_tuple[i+1]) == merge_pair):
+                result.append(new_token)
+                i += 2  # Skip both parts of the merged pair
+            else:
+                result.append(token_tuple[i])
+                i += 1
+
+        return tuple(result)
+
+    def perform_optimized_merges(
+        self, 
+        tokens_counts: Dict[tuple, int],
+        vocab: Dict[bytes, int], 
+        vocab_size: int,
+        stop_at_merge_num: Optional[int] = None
+    ) -> Tuple[Dict[bytes, int], List[Tuple[bytes, bytes]]]:
+        """
+        Perform BPE merges using optimized algorithm.
+
+        Returns:
+            Updated vocabulary and list of merges performed.
+        """
+        if self.debug:
+            print("🚀 Starting optimized BPE merges")
+
+        # Initialize
+        self.initialize(tokens_counts)
+        token_id = max(vocab.values()) + 1 if vocab else 256
+        merges = []
+
+        merge_step = 0
+        start_time = time.time()
+
+        while ((stop_at_merge_num is None or merge_step < stop_at_merge_num) and 
+               len(vocab) < vocab_size):
+
+            merge_step += 1
+            step_start = time.time()
+
+            # Find most common pair (optimized)
+            most_common_pair = self.find_most_common_pair(merge_step)
+            if most_common_pair is None:
+                if self.debug:
+                    print("   ℹ️  No more pairs to merge")
+                break
+
+            # Create new token
+            new_token = most_common_pair[0] + most_common_pair[1]
+            if new_token not in vocab:
+                vocab[new_token] = token_id
+                token_id += 1
+
+            # Record the merge
+            merges.append(most_common_pair)
+
+            # Update tokens incrementally (optimized)
+            tokens_modified = self.update_tokens_incremental(most_common_pair, new_token)
+
+            step_time = time.time() - step_start
+
+            if self.debug and merge_step % 100 == 0:
+                print(f"   📈 Step {merge_step}: {tokens_modified} tokens updated in {step_time*1000:.1f}ms")
+
+            self.stats['total_merges'] += 1
+
+        total_time = time.time() - start_time
+
+        if self.debug:
+            print(f"\n📊 OPTIMIZATION RESULTS:")
+            print(f"   Merges completed: {self.stats['total_merges']}")
+            print(f"   Total time: {total_time:.3f}s")
+            print(f"   Avg time per merge: {total_time/max(1,self.stats['total_merges'])*1000:.2f}ms")
+            print(f"   Tokens scanned: {self.stats['tokens_scanned']:,}")
+            print(f"   Pairs updated: {self.stats['pairs_updated']:,}")
+            print(f"   Heap operations: {self.stats['heap_operations']:,}")
+
+        # Convert back from index-based to dictionary format for compatibility
+        tokens_counts.clear()
+        for i in range(len(self.tokens_list)):
+            if self.tokens_active[i]:
+                token_tuple = self.tokens_list[i]
+                count = self.tokens_counts[i]
+                if token_tuple in tokens_counts:
+                    tokens_counts[token_tuple] += count
+                else:
+                    tokens_counts[token_tuple] = count
+
+        return vocab, merges
+
+
 def perform_bpe_merges(
     tokens_counts: dict[tuple, int],
     vocab: dict[bytes, int],
     vocab_size: int,
     stop_at_merge_num: int | None,
     debug: bool = False,
+    use_optimization: bool = False,
 ) -> tuple[dict[bytes, int], list[tuple[bytes, bytes]]]:
     """
     Perform BPE merges on the token counts to build vocabulary and merges.
@@ -294,26 +639,34 @@ def perform_bpe_merges(
         tokens_counts: Dictionary mapping tuples of bytes to their counts
         vocab: Initial vocabulary (should contain single-byte tokens and special tokens)
         vocab_size: Target vocabulary size
+        stop_at_merge_num: Stop training after this many merges (None for no limit)
         debug: Whether to print debug information
+        use_optimization: Whether to use the optimized heap-based algorithm
 
     Returns:
         Tuple of (final_vocab, merges_list)
     """
+    if use_optimization:
+        # Use optimized algorithm
+        optimizer = OptimizedBPEMerger(debug=debug)
+        return optimizer.perform_optimized_merges(tokens_counts, vocab, vocab_size, stop_at_merge_num)
+
+    # Use original algorithm
     token_id = max(vocab.values()) + 1 if vocab else 0
     merges: list[tuple[bytes, bytes]] = []
 
     merge_step = 0
     while (stop_at_merge_num is None or merge_step < stop_at_merge_num) and len(vocab) < vocab_size:
         merge_step += 1
-        
+
         # 1) Find the most common pair with debug print
         most_common_pair = _find_most_common_pair(tokens_counts, merge_step, debug)
         if most_common_pair is None:
             break  # No more pairs to merge
-        
+
         # 2) Form new token and update vocab
         new_token, token_id = _update_vocab_with_merge(most_common_pair, vocab, token_id, merges)
-        
+
         # 3) Update / merge the tokens_counts data structure
         tokens_counts = _update_tokens_counts(tokens_counts, most_common_pair, new_token)
 
@@ -337,6 +690,7 @@ def train_bpe(
             they are treated as any other string.
         save_pretokenization_path (str | os.PathLike, optional): Path to save pretokenization results.
         load_pretokenization_path (str | os.PathLike, optional): Path to load pretokenization results from.
+        use_optimization (bool, optional): Whether to use the optimized heap-based BPE algorithm. Default: False.
 
     Returns:
         tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
@@ -353,6 +707,7 @@ def train_bpe(
     stop_at_merge_num = kwargs.get("stop_at_merge_num", None)
     save_pretokenization_path = kwargs.get("save_pretokenization_path", None)
     load_pretokenization_path = kwargs.get("load_pretokenization_path", None)
+    use_optimization = kwargs.get("use_optimization", False)
 
     if stop_at_merge_num is not None and not isinstance(stop_at_merge_num, int):
         raise ValueError("stop_at_merge_num must be an integer or None")
@@ -365,7 +720,7 @@ def train_bpe(
         print(f"Loaded {len(tokens_counts)} unique token types")
     else:
         tokens_counts: dict[tuple, int] = pretokenize_corpus(input_path, pretokenizer_name, special_tokens, debug)
-        
+
         # Save pretokenization results if path provided
         if save_pretokenization_path is not None:
             print(f"Saving pretokenization results to {save_pretokenization_path}")
@@ -389,7 +744,7 @@ def train_bpe(
     assert len(vocab) <= vocab_size, "Vocabulary size exceeds the specified limit"
 
     # Perform BPE merges
-    vocab, merges = perform_bpe_merges(tokens_counts, vocab, vocab_size, stop_at_merge_num, debug)
+    vocab, merges = perform_bpe_merges(tokens_counts, vocab, vocab_size, stop_at_merge_num, debug, use_optimization)
 
     # Ensure the vocabulary is limited to the specified size
     if len(vocab) > vocab_size:
@@ -407,7 +762,7 @@ def save_bpe(
 ) -> None:
     """
     Save BPE vocabulary and merges to disk as pickled files.
-    
+
     Args:
         vocab: The vocabulary dictionary mapping token IDs to bytes
         merges: List of merge tuples (bytes, bytes)
@@ -415,15 +770,15 @@ def save_bpe(
     """
     output_dir = os.path.abspath(output_directory)
     os.makedirs(output_dir, exist_ok=True)
-    
+
     vocab_path = os.path.join(output_dir, "vocab.pkl")
     merges_path = os.path.join(output_dir, "merges.pkl")
-    
+
     with open(vocab_path, "wb") as f:
         pickle.dump(vocab, f)
-    
+
     with open(merges_path, "wb") as f:
         pickle.dump(merges, f)
-    
+
     print(f"Saved vocabulary to {vocab_path}")
     print(f"Saved merges to {merges_path}")
