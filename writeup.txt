@@ -1,0 +1,186 @@
+Problem (unicode1): Understanding Unicode
+
+    a. The Unicode character for chr(0) is the NULL character (U+0000).
+    b. Its string representation (__repr__()) is shown as '\x00', while its printed representation appears blank because it is a non-printable control character.
+    c. When this character occurs in text, '\x00' becomes part of the string and affects its length, but it is not visibly displayed when printed.
+
+Problem (unicode2): Unicode Encodings
+
+    a. UTF-8 is preferred because it is more space-efficient for common characters, produces shorter byte sequences than UTF-16/UTF-32 for most text, and is the dominant encoding on the web, ensuring compatibility.
+    b. It decodes each byte individually instead of as a multi-byte sequence, which breaks characters that require multiple bytes in UTF-8, such as 'é' (b'\xc3\xa9'), leading to incorrect output.
+    c. b'\xc3\x28'. Here, 0xC3 starts a multi-byte UTF-8 sequence, but 0x28 is not a valid continuation byte, so it cannot be decoded into any Unicode character.
+    
+Problem (train_bpe_tinystories):
+
+    a. Training took 7.9 minutes (≈471 seconds) and used ~94.6 MB RAM. The longest token is length 15; it appears to be "b' accomplishment'" in bytes, which makes sense given frequent its frequenent occurences in TinyStories.
+    b. Profiling shows pretokenization dominates, with pair selection second. The bottleneck is the regex processing and chunk handling during pretokenization, which takes the majority of training time.
+
+Problem (train_bpe_expts_owt):
+
+
+Problem (transformer_accounting):
+
+    a. vocab_size : 50,257, context_length : 1,024, num_layers : 48, d_model : 1,600, num_heads : 25, d_ff : 6,400
+        
+        Token embedding layer: vocab_size × d_model = 50,257 × 1,600 = 80,411,200 parameters.
+
+        Per Transformer block (48 blocks):
+        
+        - Multi-head attention (MHA): qkv_proj (3 × d_model × d_model = 3 × 1,600 × 1,600 = 7,680,000) + output_proj (d_model × d_model = 1,600 × 1,600 = 2,560,000) = 10,240,000.
+        - Feed-forward network (FFN, SwiGLU): W1 (d_ff × d_model = 6,400 × 1,600 = 10,240,000) + W3 (d_ff × d_model = 10,240,000) + W2 (d_model × d_ff = 1,600 × 6,400 = 10,240,000) = 30,720,000.
+        - Two RMSNorm layers: 2 × d_model = 2 × 1,600 = 3,200.
+        Total per block: 10,240,000 + 30,720,000 + 3,200 = 40,963,200.
+
+        Across 48 blocks: 48 × 40,963,200 = 1,966,233,600.
+
+        Final RMSNorm: d_model = 1,600.
+        LM head: vocab_size × d_model = 50,257 × 1,600 = 80,411,200.
+
+        Total parameters: 80,411,200 (embedding) + 1,966,233,600 (blocks) + 1,600 (final norm) + 80,411,200 (LM head) = 2,127,057,600. 
+        
+        For memory, each parameter uses 4 bytes (single-precision float32). Total memory: 2,127,057,600 × 4 = 8,508,230,400 bytes ≈ 7.92 GB (calculated as bytes / 1,073,741,824).
+
+    b. The matrix multiplies required for a forward pass (with B=1, T=1024) are:  
+    
+        LM head projection: matrix of size 50,257 × 1,600 multiplied by hidden states of size 1,024 × 1,600, requiring 164,682,137,600 FLOPs.
+        
+        Per Transformer block (repeated for 48 blocks):
+        - QKV projection: Weight (3 × d_model × d_model = 4,800 × 1,600) × input (T × d_model = 1,024 × 1,600). FLOPs: 2 × 1,024 × 1,600 × 4,800 = 15,728,640,000. (Computes Q, K, V in one projection.)
+        - Attention scores (Q @ K.T, aggregated across heads): Equivalent to 2 × T² × d_model = 2 × 1,024² × 1,600 = 3,355,443,200. (For each of 25 heads: 2 × T × (d_model / num_heads) × T, totals 2 T² d_model.)
+        - Attention application (softmax scores @ V, aggregated across heads): 2 × T² × d_model = 2 × 1,024² × 1,600 = 3,355,443,200. (Similar to above: per head 2 × T × T × (d_model / num_heads), totals 2 T² d_model.)
+        - Attention output projection: Weight (d_model × d_model = 1,600 × 1,600) × attention output (T × d_model = 1,024 × 1,600). FLOPs: 2 × 1,024 × 1,600 × 1,600 = 5,242,880,000.
+        - FFN W1: Weight (d_ff × d_model = 6,400 × 1,600) × input (T × d_model = 1,024 × 1,600). FLOPs: 2 × 1,024 × 1,600 × 6,400 = 20,971,520,000.
+        - FFN W3: Same as W1: 2 × 1,024 × 1,600 × 6,400 = 20,971,520,000.
+        - FFN W2: Weight (d_model × d_ff = 1,600 × 6,400) × gated activation (T × d_ff = 1,024 × 6,400). FLOPs: 2 × 1,024 × 6,400 × 1,600 = 20,971,520,000.
+
+        After all blocks:
+        - LM head: Weight (vocab_size × d_model = 50,257 × 1,600) × final hidden states (T × d_model = 1,024 × 1,600). FLOPs: 2 × 1,024 × 1,600 × 50,257 = 164,682,137,600.
+
+        Per-block total: 15,728,640,000 (QKV) + 3,355,443,200 (scores) + 3,355,443,200 (application) + 5,242,880,000 (output proj) + 20,971,520,000 (W1) + 20,971,520,000 (W3) + 20,971,520,000 (W2) = 90,596,966,400.
+        Across 48 blocks: 48 × 90,596,966,400 = 4,348,654,387,200.
+        Grand total FLOPs: 4,348,654,387,200 (blocks) + 164,682,137,600 (LM head) = 4,513,336,524,800.
+
+    c. The feed-forward network (FFN) projections dominate, accounting for 3,019,898,880,000 FLOPs (about 67% of total), as they involve three large matrix multiplies scaling with d_ff (4 × d_model) per layer. Attention linear projections (QKV and output) follow at 1,006,632,960,000 FLOPs (about 22%), while quadratic attention terms and the LM head contribute less (7% and 4%, respectively).
+
+    d. We repeat the FLOPs calculation for each model using the same formulas, grouping into components: attention linear (QKV + output proj = 8 T d_model² per layer × num_layers), attention quadratic (scores + application = 4 T² d_model per layer × num_layers), feed-forward (6 T d_model d_ff per layer × num_layers), and LM head (2 T d_model vocab_size). All use T=1,024, vocab_size=50,257, d_ff=4 × d_model.Model
+
+        GPT-2 Small (L=12, d_model=768, num_heads=12, d_ff=3072):
+        - FFN: 173,946,175,488 (49.8%)
+        - Attention linear: 57,985,837,056 (16.6%)
+        - Attention quadratic: 38,654,667,264 (11.1%)
+        - LM head: 79,043,685,888 (22.6%)
+        - Total: 349,630,365,696
+
+        GPT-2 Medium (L=24, d_model=1024, num_heads=16, d_ff=4096):
+        - FFN: 618,547,290,624 (59.9%)
+        - Attention linear: 206,182,430,208 (20.0%)
+        - Attention quadratic: 103,079,214,336 (10.0%)
+        - LM head: 105,300,568,832 (10.2%)
+        - Total: 1,033,109,504,000
+
+        GPT-2 Large (L=36, d_model=1280, num_heads=20, d_ff=5120):
+        - FFN: 1,449,720,422,400 (64.2%)
+        - Attention linear: 483,240,140,800 (21.4%)
+        - Attention quadratic: 193,296,056,320 (8.6%)
+        - LM head: 131,497,901,440 (5.8%)
+        - Total: 2,257,754,521,600
+
+        GPT-2 XL (L=48, d_model=1600, num_heads=25, d_ff=6400):
+        - FFN: 3,019,898,880,000 (66.9%)
+        - Attention linear: 1,006,632,960,000 (22.3%)
+        - Attention quadratic: 322,122,547,200 (7.1%)
+        - LM head: 164,682,137,600 (3.7%)
+        - Total: 4,513,336,524,800
+
+        As model size increases (higher num_layers, d_model, d_ff), the feed-forward and attention linear components take proportionally more FLOPs because they scale quadratically with d_model and linearly with num_layers (O(num_layers × d_model²)), dominating over the quadratic attention terms (O(num_layers × T² × d_model), T fixed) and LM head (O(T × d_model × vocab_size), fixed T and vocab_size), which decrease relatively.
+
+    e. The total FLOPs increases to 149,522,795,724,800 (about 33× higher), as linear terms (attention projections, FFN, LM head) scale with T (16× increase), while quadratic attention terms scale with T² (256× increase). Quadratics rise from 7% to ~55% of total FLOPs, reducing the relative share of FFN (from 67% to ~32%) and other linear terms.
+
+Problem (learning_rate_tuning):
+
+    The learning rate dramatically affects training stability: with lr=10.0 and lr=100.0, the loss converges smoothly (faster with higher lr), but with lr=1000.0, the loss diverges exponentially, demonstrating that excessively high learning rates can make training unstable and cause the loss to increase rather than decrease.
+
+Problem (adamwAccounting):
+
+    a. 
+        B = batch_size, V = vocab_size, T = context_length, N = num_layers, d = d_model, dff = 4d,
+        L = number of layers
+
+        Parameters: 4(2Vd + L(16d^2 + 2d) + d) bytes
+        Activations: 4[L(16BTd + 2BHT^2) + BTd + 2BTV] bytes
+        Gradients: 4(2Vd + L(16d^2 + 2d) + d) bytes
+        Omptimizer: 8(2Vd + L(16d^2 + 2d) + d) bytes
+        Total: 16(2Vd + L(16d^2 + 2d) + d) + 4[L(16BTd + 2BHT^2) + BTd + 2BTV] bytes
+
+    b. 
+        For GPT-2 XL: V=50257, T=1024, L=48, d=1600, H=25
+
+        P = 2 × 50,257 × 1,600 + 48 (16 × 1,600² + 2 × 1,600) + 1,600 = 2,127,057,600
+
+        Parameters: 4 × P = 4 × 2,127,057,600 = 8,508,230,400 bytes.  
+        Gradients: Same as parameters = 8,508,230,400 bytes.  
+        Optimizer state: 8 × P = 8 × 2,127,057,600 = 17,016,460,800 bytes.
+
+        Total non-activation: 8,508,230,400 + 8,508,230,400 + 17,016,460,800 = 34,032,921,600 bytes.  
+
+        Convert to GB (1 GB = 1,000,000,000 bytes for simplicity, as often used in hardware contexts): 34,032,921,600 / 1,000,000,000 ≈ 34.033 GB.
+
+        Use the activations formula: Number of elements = L(16Td + 2HT²) + Td + TV (for B=1). 
+        Bytes per B=1: 4 × 3,827,975,168 = 15,311,900,672 bytes ≈ 15.312 GB.  
+        For general B: Activation memory = 15.312 × B GB.
+
+        Maximum integer B = 3 (total ≈ 15.312 × 3 + 34.033 = 79.969 GB < 80 GB; for B=4: 95.281 GB > 80 GB)
+
+        15.312⋅batch_size+34.033GB, maximum batch size 3. 
+
+    c. Total forward FLOPs = 4,513,336,524,800 (as calculated in previous problem):
+
+            Total forward = 2BTd(V + L(16d + 2T))
+            Backward pass FLOPs = 2 × forward (per Kaplan/Hoffmann).  
+            Optimizer negligible (cP where c is constant and P is parameters)  
+            Total step: 3 × forward = 6BTd(V + L(16d + 2T)).
+
+    d.  
+
+        Per step Flops:
+        Forward for B=1, T=1,024: 4.513 × 10¹² FLOPs (from earlier).  
+        For B=1,024: 1,024 × 4.513 × 10¹² ≈ 4.621 × 10¹⁵ FLOPs.  
+        Backward: 2 × forward ≈ 9.242 × 10¹⁵ FLOPs.  
+        Total per step: ≈ 1.386 × 10¹⁶ FLOPs (forward + backward; optimizer ignored).
+
+        Total FLOPs for 400,000 steps.  400,000 × 1.386 × 10¹⁶ = 5.544 × 10²¹ FLOPs.
+
+        A100 peak: 19.5 TFLOPs/s = 19.5 × 10¹² FLOPs/s.  
+        At 50% MFU: 0.5 × 19.5 × 10¹² = 9.75 × 10¹² FLOPs/s.
+
+        Time = total FLOPs / throughput = 5.544 × 10²¹ / 9.75 × 10¹² ≈ 5.686 × 10⁸ seconds.
+
+        Seconds in a day: 86,400.  
+        Days = 5.686 × 10⁸ / 86,400 ≈ 6,583 days
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
