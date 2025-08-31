@@ -75,9 +75,9 @@ class SwiGLU(nn.Module):
         self.device = device or torch.device('cpu')
         self.dtype = dtype or torch.float32
         
-        self.W1 = Linear(self.d_ff, self.d_model)
-        self.W3 = Linear(self.d_ff, self.d_model)
-        self.W2 = Linear(self.d_model, self.d_ff)
+        self.W1 = Linear(self.d_model, self.d_ff)
+        self.W3 = Linear(self.d_model, self.d_ff)
+        self.W2 = Linear(self.d_ff, self.d_model)
 
     def forward(self, x):
 

@@ -2,6 +2,7 @@ from jaxtyping import Float, Int
 from torch import Tensor
 import torch
 import math
+from typing import Optional, Any
 
 def cross_entropy(inputs: Float[Tensor, "batch_size vocab_size"], targets: Int[Tensor, "batch_size"]):
 
@@ -47,12 +48,13 @@ def gradient_clipping(params: list[torch.Tensor], M: float, eps: float = 1e-6) -
                 if p.grad is not None:
                     p.grad.mul_(clip_coef)
 
-def save_checkpoint(model, optimizer, iteration, out):
+def save_checkpoint(model, optimizer, iteration, out, run_info: dict[str, Any] | None = None):
 
     checkpoint = {
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
-        'iteration': iteration
+        'iteration': iteration,
+        'run_info': run_info
     }
 
     torch.save(checkpoint, out)
