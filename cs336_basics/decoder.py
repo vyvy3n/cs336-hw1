@@ -19,49 +19,49 @@ def decode(model: TransformerLM, tokenizer: Tokenizer, prompt: str, max_tokens_l
         for _ in range(max_tokens_length):
 
             # prepare input
-            current_input_ids = generated_ids[-context_length:] if len(generated_ids) > context_length else generated_ids
-            input_tensor = torch.tensor(current_input_ids, device=device).unsqueeze(0)
+            if len(generated_ids) > context_length:
+                input_ids = generated_ids[-context_length:]
+            else:
+                input_ids = generated_ids
+
+            input_tensor = torch.tensor(input_ids, device=device).unsqueeze(0)
             logits = model(input_tensor)
 
             next_token_logits = logits[:, -1, :]
 
-            # Apply temperature scaling and softmax
-            if temperature == 0:
-                # Greedy decoding: pick the token with the highest logit
-                next_token_id = torch.argmax(next_token_logits, dim=-1).item()
+            if temperature > 0:
+                next_token_logits = next_token_logits / temperature
+
+            probabilities = torch.softmax(next_token_logits, dim=-1)
+
+            if top_p < 1.0:
+
+                sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
+                cum_probs = torch.cumsum(sorted_probs, dim=-1)
+
+                 # mask out tokens beyond nucleus
+                cutoff = cum_probs > top_p
+
+                cutoff[..., 1:] = cutoff[..., :-1].clone()
+                cutoff[..., 0] = False
+
+                sorted_probs[cutoff] = 0.0
+                probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
+
+                # sample from nucleus
+                next_token = torch.multinomial(probs, num_samples=1)
+                next_token = sorted_indices.gather(-1, next_token)
             else:
-                scaled_logits = next_token_logits / temperature
-                probabilities = torch.softmax(scaled_logits, dim=-1)
+                # multinomial sampling from full distribution
+                next_token = torch.multinomial(probabilities, num_samples=1)
 
-                # Apply Top-p (nucleus) sampling
-                if top_p < 1.0:
-                    sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
-                    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-
-                    # Create a mask to keep only the tokens in the nucleus
-                    # All tokens whose cumulative probability (excluding themselves) is less than top_p are kept.
-                    # This correctly includes the token that pushes the sum over top_p.
-                    mask = cumulative_probs - sorted_probs < top_p
-                    
-                    # Filter and re-normalize probabilities
-                    filtered_probs = sorted_probs * mask.float()
-                    # Re-normalize to ensure sum is 1.0 (important after filtering)
-                    filtered_probs = filtered_probs / filtered_probs.sum(dim=-1, keepdim=True)
-
-                    # Sample from the filtered distribution
-                    next_token_id = sorted_indices[torch.multinomial(filtered_probs, num_samples=1)].squeeze().item()
-                else:
-                    # If top_p is 1.0, just sample from the temperature-scaled probabilities (no top-p filtering)
-                    next_token_id = torch.multinomial(probabilities, num_samples=1).squeeze().item()
-            
-            token_id = next_token_id
+            token_id = next_token.item()
             if token_id == stop_token:
                 break
 
             generated_ids.append(token_id)
 
-    model.train()
-    return tokenizer.decode(generated_ids)
+        return tokenizer.decode(generated_ids)
                 
 
             
