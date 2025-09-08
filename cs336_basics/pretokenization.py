@@ -54,32 +54,87 @@ def find_chunk_boundaries(
     return final_boundaries
 
 
+def split_on_special_tokens(
+    text: str, 
+    special_tokens: List[str] = None
+    ) -> List[str]:
+    """
+    Split text on special tokens.
+
+    Example: 
+        text = "low low low<|endoftext|> lower lower" 
+        special_tokens = "<|endoftext|>"
+        segments = ['low low low', '<|endoftext|>', ' lower lower']
+    """
+    special_tokens = special_tokens or []  # Replaces None, [], "", 0, False
+
+    # Create split pattern
+    split_pattern = "|".join(re.escape(token) for token in special_tokens)
+    
+    # Split on special tokens (or not, if pattern is empty)
+    segments = re.split(f"({split_pattern})", text) if split_pattern else [text]
+
+    logging.log(logging.INFO, f"Text segments splited on special tokens: {segments}")
+    return segments
+    
+
 def pretokenize_text(text: str) -> List[str]:
     """
-    Pre-tokenize text using GPT-2 regex pattern.
+    Pre-tokenize text using GPT-2 regex pattern
+
+    Example: 
+        text = "low low low lower lower" 
+        pretokens = ['low', ' low', ' low', ' lower', ' lower']
     """
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+
     pretokens = [match.group() for match in re.finditer(PAT, text)]
-    logging.log(logging.INFO, f"Pre-tokenized text into {len(pretokens)} tokens")
+
+    logging.log(logging.INFO, f"Pre-tokenized text into {len(pretokens)} pre-tokens")
     return pretokens
 
 
-def count_pretokens(text: str) -> Dict[Tuple[bytes, ...], int]:
+def count_pretokens(
+    text: str, 
+    special_tokens: List[str] = None
+    ) -> Dict[Tuple[bytes, ...], int]:
     """
     Pre-tokenize text and count frequency of each pre-token as bytes.
+    Special tokens are excluded from counts as they are handled separately.
     
+    Args:
+        text: Input text to pre-tokenize
+        special_tokens: List of special tokens to split on before pre-tokenization
+        
     Returns:
         Dictionary mapping (byte1, byte2, ...) tuples to counts
+
+    Example: 
+        text = "low low low<|endoftext|> lower lower" 
+        special_tokens = "<|endoftext|>"
+        pretoken_counts = { 
+        (b'l', b'o', b'w'): 1
+        (b' ', b'l', b'o', b'w'): 2
+        (b' ', b'l', b'o', b'w', b'e', b'r'): 2
+        }
     """
-    pretokens = pretokenize_text(text)
+    special_tokens = special_tokens or []
+    
+    # Split text on special tokens first
+    segments = split_on_special_tokens(text, special_tokens)
     counts = {}
     
-    for pretoken in pretokens:
-        # Convert to bytes
-        pretoken_bytes = pretoken.encode('utf-8')
-        # Convert to tuple of individual bytes
-        byte_tuple = tuple(bytes([b]) for b in pretoken_bytes)
-        counts[byte_tuple] = counts.get(byte_tuple, 0) + 1
+    for segment in segments:
+        if segment in special_tokens:
+            # Skip special tokens - they are handled separately in vocabulary initialization
+            continue
+        elif segment:  # Skip empty segments
+            # Pre-tokenize regular text segments
+            pretokens = pretokenize_text(segment)
+            for pretoken in pretokens:
+                pretoken_bytes = pretoken.encode('utf-8')
+                byte_tuple = tuple(bytes([b]) for b in pretoken_bytes)
+                counts[byte_tuple] = counts.get(byte_tuple, 0) + 1
     
     logging.log(logging.INFO, f"Counted {len(counts)} unique pre-tokens")
     return counts
