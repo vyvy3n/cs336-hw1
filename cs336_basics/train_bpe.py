@@ -8,9 +8,9 @@ merge efficiency using incremental pair count updates.
 import os
 import logging
 from typing import Dict, List, Tuple, Set
-from collections import defaultdict, Counter
+from collections import defaultdict
 
-from .pretokenization import find_chunk_boundaries, count_pretokens, pretokenize_text
+from .pretokenization import find_chunk_boundaries, count_pretokens
 
 
 def initialize_vocabulary(special_tokens: List[str] = None) -> Dict[bytes, int]:
@@ -48,10 +48,10 @@ def build_pair_counts_and_index(
         pair_index: (byte1, byte2) pair -> set of pretoken tuples that contain it
     """
 
-    pair_counts: Dict[Tuple[bytes, bytes], int] = {}
+    pair_counts = {}
     # pair_index is a defaultdict where each missing key
     # automatically creates an empty set as its default value.
-    pair_index: Dict[Tuple[bytes, bytes], Set[Tuple[bytes, ...]]] = defaultdict(set)
+    pair_index = defaultdict(set)
 
     for pretoken_tuple, count in pretoken_counts.items():
         # Count adjacent pairs within this pre-token, and index it
@@ -59,45 +59,45 @@ def build_pair_counts_and_index(
             pair = (pretoken_tuple[i], pretoken_tuple[i + 1])
             pair_counts[pair] = pair_counts.get(pair, 0) + count
             pair_index[pair].add(pretoken_tuple)
-    
+
     logging.log(logging.INFO, f"Initialized pair index with {len(pair_index)} unique byte pairs")
     return pair_counts, pair_index
 
 
-def pretoken_pairs_set(pretoken_tuple: Tuple[bytes, ...]) -> Set[Tuple[bytes, bytes]]:
-    """Return the set of adjacent pairs present in the given pretoken tuple."""
-    return {
-        (pretoken_tuple[i], pretoken_tuple[i + 1])
-        for i in range(len(pretoken_tuple) - 1)
-    }
-
-
 def find_most_frequent_pair(pair_counts: Dict[Tuple[bytes, bytes], int]) -> Tuple[bytes, bytes]:
     """
-    Find the most frequent byte pair, breaking ties by preferring the lexicographically greater pair.
+    Find the most frequent byte pair, breaking ties lexicographically.
     """
     if not pair_counts:
         raise ValueError("No pairs to merge")
-
-    max_count = max(pair_counts.values())
-    # Get all pairs with max count, then pick lexicographically largest
-    max_pairs = [pair for pair, count in pair_counts.items() if count == max_count]
-    # Merge the lexicographically greater pair when ties occur
-    most_frequent = max(max_pairs)
-
-    logging.log(logging.INFO, f"Most frequent pair: {most_frequent} with count {max_count}")
-    return most_frequent
+    # Pick by (count, pair) so ties prefer lexicographically larger pair
+    most_frequent_pair, max_count = max(pair_counts.items(), key=lambda kv: (kv[1], kv[0]))
+    logging.log(logging.INFO, f"Most frequent pair: {most_frequent_pair} with count {max_count}")
+    return most_frequent_pair
 
 
-def contains_pair(pretoken_tuple: Tuple[bytes, ...], pair: Tuple[bytes, bytes]) -> bool:
+def new_pretoken_after_merge_pair(
+    old_pretoken: Tuple[bytes, ...],
+    pair: Tuple[bytes, bytes],
+) -> Tuple[bytes, ...]:
     """
-    Check if a pre-token tuple contains the specified pair.
+    Build the new pretoken tuple list by merging the target pair (left-to-right)
     """
-    for i in range(len(pretoken_tuple) - 1):
-        if pretoken_tuple[i] == pair[0] and pretoken_tuple[i + 1] == pair[1]:
-            return True
-    return False
+    new_tuple = []
+    i = 0
+    while i < len(old_pretoken):
+        if (i < len(old_pretoken) - 1 and 
+            old_pretoken[i] == pair[0] and 
+            old_pretoken[i + 1] == pair[1]):
+            # Merge the pair
+            new_tuple.append(pair[0] + pair[1])  # Merged bytes
+            i += 2  # Skip both bytes
+        else:
+            new_tuple.append(old_pretoken[i])
+            i += 1
 
+    return tuple(new_tuple)
+    
 
 def merge_pair_and_update_counts(
     pretoken_counts: Dict[Tuple[bytes, ...], int],
@@ -121,90 +121,57 @@ def merge_pair_and_update_counts(
         Tuple of (updated_pretoken_counts, updated_pair_counts, updated_pair_index)
     """
     merged_bytes = pair[0] + pair[1]
-    new_pretoken_counts: Dict[Tuple[bytes, ...], int] = {}
-    new_pair_counts: Dict[Tuple[bytes, bytes], int] = pair_counts.copy()
 
-    # Remove the merged pair from counts entirely (no need to decrement per occurrence)
-    if pair in new_pair_counts:
-        del new_pair_counts[pair]
+    # Copy; only updated pairs count and index in affected tokens
+    new_pair_counts = pair_counts.copy()
+    new_pair_counts.pop(pair, None)
+    new_pretoken_counts = pretoken_counts.copy()
 
-    # Determine which pretokens are affected using the inverted index
-    affected_pretokens: Set[Tuple[bytes, ...]] = set(pair_index.get(pair, set()))
+    # Take affected pretokens (and clear this entry) for early exit and simpler logic
+    affected_pretokens = pair_index.pop(pair, set())
+    if not affected_pretokens:
+        return pretoken_counts, pair_counts, pair_index
 
-    # Copy unaffected pretokens without scanning their contents
-    for pretoken_tuple, count in pretoken_counts.items():
-        if pretoken_tuple not in affected_pretokens:
-            new_pretoken_counts[pretoken_tuple] = count
+    # Process affected pretokens only
+    # e.g. affected pretoken (A, B, C, D) as old tuple, merge pair (B, C) -> new tuple (A, BC, D) 
+    for old_tuple in affected_pretokens:
+        count = pretoken_counts.get(old_tuple, 0)
+        if not count:
+            continue
 
-    # Process affected pretokens
-    for pretoken_tuple in affected_pretokens:
-        count = pretoken_counts[pretoken_tuple]
+        # Remove old pretoken tuple from the map
+        new_pretoken_counts.pop(old_tuple, None)
 
-        # Collect all old pairs from this pretoken (for index updates only)
-        old_pairs = pretoken_pairs_set(pretoken_tuple)
+        # Subtract ALL old pairs of this pretoken
+        for j in range(len(old_tuple) - 1):
+            # Decrement old pair count and delete if <= 0; no-op if key missing
+            old_pair = (old_tuple[j], old_tuple[j + 1])
+            if old_pair in new_pair_counts.keys():
+                new_pair_counts[old_pair] -= count
+                if new_pair_counts[old_pair] <= 0:
+                    new_pair_counts.pop(old_pair, None)
+        
+            # Update inverted index: remove old membership
+            old_pair_index_set = pair_index.get(old_pair)
+            if old_pair_index_set:
+                old_pair_index_set.discard(old_tuple)
+                if not old_pair_index_set:
+                    pair_index.pop(old_pair, None)
+            
+        # Build the new pretoken tuple list by merging the target pair
+        new_tuple = new_pretoken_after_merge_pair(old_tuple, pair)
 
-        # Create new tuple with merged pair and update pair counts incrementally
-        new_tuple_list: List[bytes] = []
-        i = 0
-        while i < len(pretoken_tuple):
-            if (
-                i < len(pretoken_tuple) - 1
-                and pretoken_tuple[i] == pair[0]
-                and pretoken_tuple[i + 1] == pair[1]
-            ):
-                # Remove affected neighbor pairs from counts
-                if i > 0:
-                    old_pair_before = (pretoken_tuple[i - 1], pretoken_tuple[i])
-                    if old_pair_before in new_pair_counts:
-                        new_pair_counts[old_pair_before] -= count
-                        if new_pair_counts[old_pair_before] <= 0:
-                            del new_pair_counts[old_pair_before]
-                if i < len(pretoken_tuple) - 2:
-                    old_pair_after = (pretoken_tuple[i + 1], pretoken_tuple[i + 2])
-                    if old_pair_after in new_pair_counts:
-                        new_pair_counts[old_pair_after] -= count
-                        if new_pair_counts[old_pair_after] <= 0:
-                            del new_pair_counts[old_pair_after]
+        # Add ALL new pairs of this pretoken
+        for j in range(len(new_tuple) - 1):
+            # Increment new pair count (create if absent)
+            new_pair = (new_tuple[j], new_tuple[j + 1])
+            new_pair_counts[new_pair] = new_pair_counts.get(new_pair, 0) + count
 
-                # Add new neighbor pairs formed by the merge
-                if i > 0:
-                    new_pair_before = (pretoken_tuple[i - 1], merged_bytes)
-                    new_pair_counts[new_pair_before] = new_pair_counts.get(new_pair_before, 0) + count
-                if i < len(pretoken_tuple) - 2:
-                    new_pair_after = (merged_bytes, pretoken_tuple[i + 2])
-                    new_pair_counts[new_pair_after] = new_pair_counts.get(new_pair_after, 0) + count
+            # Update inverted index: add new membership
+            pair_index.setdefault(new_pair, set()).add(new_tuple)
 
-                # Emit merged token
-                new_tuple_list.append(merged_bytes)
-                i += 2
-            else:
-                new_tuple_list.append(pretoken_tuple[i])
-                i += 1
-
-        new_tuple = tuple(new_tuple_list)
-        # Aggregate counts if multiple pretokens collapse to the same new tuple
+        # Add/aggregate the rebuilt pretoken
         new_pretoken_counts[new_tuple] = new_pretoken_counts.get(new_tuple, 0) + count
-
-        # Update inverted index: remove old pretoken membership
-        for p in old_pairs:
-            s = pair_index.get(p)
-            if s is not None:
-                s.discard(pretoken_tuple)
-                if not s:
-                    # keep the dict clean
-                    pair_index.pop(p, None)
-
-        # Update inverted index: add new pretoken membership
-        new_pairs = pretoken_pairs_set(new_tuple)
-        for p in new_pairs:
-            s = pair_index.get(p)
-            if s is None:
-                s = set()
-                pair_index[p] = s
-            s.add(new_tuple)
-
-    # The merged pair no longer exists; ensure its index set is cleared
-    pair_index.pop(pair, None)
 
     logging.log(logging.INFO, f"Merged pair {pair} -> {merged_bytes}")
     return new_pretoken_counts, new_pair_counts, pair_index
