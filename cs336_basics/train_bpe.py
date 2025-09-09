@@ -9,6 +9,8 @@ import os
 import logging
 from typing import Dict, List, Tuple, Set
 from collections import defaultdict
+from collections import Counter
+from multiprocessing import Process, Queue
 
 from .pretokenization import find_chunk_boundaries, count_pretokens
 
@@ -47,7 +49,6 @@ def build_pair_counts_and_index(
         pair_counts: (byte1, byte2) pair -> its total counts
         pair_index: (byte1, byte2) pair -> set of pretoken tuples that contain it
     """
-
     pair_counts = {}
     # pair_index is a defaultdict where each missing key
     # automatically creates an empty set as its default value.
@@ -86,16 +87,12 @@ def new_pretoken_after_merge_pair(
     new_tuple = []
     i = 0
     while i < len(old_pretoken):
-        if (i < len(old_pretoken) - 1 and 
-            old_pretoken[i] == pair[0] and 
-            old_pretoken[i + 1] == pair[1]):
-            # Merge the pair
-            new_tuple.append(pair[0] + pair[1])  # Merged bytes
+        if (i < len(old_pretoken) - 1 and old_pretoken[i:i+2] == pair):
+            new_tuple.append(pair[0] + pair[1])  # Merged pair bytes
             i += 2  # Skip both bytes
         else:
             new_tuple.append(old_pretoken[i])
             i += 1
-
     return tuple(new_tuple)
     
 
@@ -120,8 +117,6 @@ def merge_pair_and_update_counts(
     Returns:
         Tuple of (updated_pretoken_counts, updated_pair_counts, updated_pair_index)
     """
-    merged_bytes = pair[0] + pair[1]
-
     # Copy; only updated pairs count and index in affected tokens
     new_pair_counts = pair_counts.copy()
     new_pair_counts.pop(pair, None)
@@ -173,7 +168,7 @@ def merge_pair_and_update_counts(
         # Add/aggregate the rebuilt pretoken
         new_pretoken_counts[new_tuple] = new_pretoken_counts.get(new_tuple, 0) + count
 
-    logging.log(logging.INFO, f"Merged pair {pair} -> {merged_bytes}")
+    logging.log(logging.INFO, f"Merged pair {pair} -> {pair[0] + pair[1]}")
     return new_pretoken_counts, new_pair_counts, pair_index
 
 
@@ -230,10 +225,18 @@ def train_bpe_on_pretokens(
     return merges, vocab
 
 
+def worker(start: int, end: int, input_path: str, special_tokens: list[str], q: Queue):
+    with open(input_path, "rb") as f:
+        f.seek(start)
+        chunk = f.read(end - start).decode("utf-8", errors="ignore")
+        q.put(count_pretokens(chunk, special_tokens))
+
+
 def run_train_bpe(
     input_path: str | os.PathLike,
     vocab_size: int,
     special_tokens: List[str],
+    num_processes: int = 4,
     **kwargs,
 ) -> Tuple[Dict[int, bytes], List[Tuple[bytes, bytes]]]:
     """
@@ -252,21 +255,27 @@ def run_train_bpe(
     logging.log(logging.INFO, f"Starting BPE training on {input_path}")
     logging.log(logging.INFO, f"Target vocab size: {vocab_size}, special tokens: {special_tokens}")
 
-    # Read and pre-tokenize the corpus
-    all_pretoken_counts = {}
-
+    # Read and pre-tokenize the corpus (parallelization)
+    processes = []
+    q = Queue()
     with open(input_path, "rb") as f:
-        boundaries = find_chunk_boundaries(f, 4, b"<|endoftext|>")
+        boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
 
+        # avoid copying big chunks by passing start/end so workers read their own slice
         for start, end in zip(boundaries[:-1], boundaries[1:]):
-            f.seek(start)
-            chunk = f.read(end - start).decode("utf-8", errors="ignore")
-            chunk_counts = count_pretokens(chunk, special_tokens)
+            p = Process(target=worker, args=(start, end, input_path, special_tokens, q))
+            p.start()
+            processes.append(p)
+    
+    all_pretoken_counts = Counter(d := q.get()) 
 
-            # Merge counts
-            for pretoken, count in chunk_counts.items():
-                all_pretoken_counts[pretoken] = all_pretoken_counts.get(pretoken, 0) + count
+    # Merge counts
+    for _ in range(1, len(processes)): 
+        all_pretoken_counts.update(q.get())
 
+    for p in processes:
+        p.join()
+    
     logging.log(logging.INFO, f"Total unique pre-tokens: {len(all_pretoken_counts)}")
 
     # Calculate number of merges needed

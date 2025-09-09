@@ -78,7 +78,7 @@ def split_on_special_tokens(
     return segments
     
 
-def pretokenize_text(text: str) -> List[str]:
+def pretokenize(text: str) -> List[str]:
     """
     Pre-tokenize text using GPT-2 regex pattern
 
@@ -130,7 +130,7 @@ def count_pretokens(
             continue
         elif segment:  # Skip empty segments
             # Pre-tokenize regular text segments
-            pretokens = pretokenize_text(segment)
+            pretokens = pretokenize(segment)
             for pretoken in pretokens:
                 pretoken_bytes = pretoken.encode('utf-8')
                 byte_tuple = tuple(bytes([b]) for b in pretoken_bytes)
