@@ -59,17 +59,28 @@ def split_on_special_tokens(
     special_tokens: List[str] = None
     ) -> List[str]:
     """
-    Split text on special tokens.
+    Split text on special tokens, prioritizing longer tokens first.
 
     Example: 
         text = "low low low<|endoftext|> lower lower" 
         special_tokens = "<|endoftext|>"
         segments = ['low low low', '<|endoftext|>', ' lower lower']
+
+    Note: Overlapping special tokens
+        (tests/test_tokenizer.py::test_overlapping_special_tokens)
+        
+        Input: "Hello, how <|endoftext|><|endoftext|> are you?<|endoftext|>"
+        Expected tokenization behavior: ['Hello', ',', ' how', ' ', '<|endoftext|><|endoftext|>', ' are', ' you', '?', '<|endoftext|>']
+        Count of <|endoftext|>: 1 (only the single one at the end)
+        Count of <|endoftext|><|endoftext|>: 1 (the double one in the middle)
     """
     special_tokens = special_tokens or []  # Replaces None, [], "", 0, False
 
+    # Sort by length descending to prioritize longer tokens
+    sorted_tokens = sorted(special_tokens, key=len, reverse=True)
+
     # Create split pattern
-    split_pattern = "|".join(re.escape(token) for token in special_tokens)
+    split_pattern = "|".join(re.escape(token) for token in sorted_tokens)
     
     # Split on special tokens (or not, if pattern is empty)
     segments = re.split(f"({split_pattern})", text) if split_pattern else [text]
