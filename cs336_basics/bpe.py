@@ -49,11 +49,11 @@ def _inv(b: bytes) -> bytes:
     Return inverted bytes to break ties by preferring lexicographically greater pair.
 
     Rationale:
-    1.  bytes(255 - x for x in b) is not enough since it preserves the “shorter is smaller” tie-break, 
+    1.  bytes(255 - x for x in b) is not enough since it preserves the “shorter is smaller” tie-break,
         which leads to incorrect merge ordering like choosing (b' ', b'd') before (b' a', b'nd').
 
-    2.  Append a 0xFF sentinel after inverting the bytes. 
-        This flips the prefix tie-break as well, 
+    2.  Append a 0xFF sentinel after inverting the bytes.
+        This flips the prefix tie-break as well,
         so ascending order on the mapped key matches descending order on the original bytes.
     """
     inv = _inv_cache.get(b)
@@ -111,13 +111,13 @@ def find_most_frequent_pair(
         pair_heap: List[Tuple[int, Tuple[bytes, bytes], Tuple[bytes, bytes]]]
     ) -> Tuple[bytes, bytes]:
     """
-    Find the most frequent byte pair, breaking ties lexicographically. 
+    Find the most frequent byte pair, breaking ties lexicographically.
     Use heap with lazy deletion.
 
-    ATTENTION: 
+    ATTENTION:
         Taking max() over the entire pair counts dict at every merge step takes O(n).
         Maintain a max-heap of pair counts instead, can reduces it to O(log n).
-        This is the major performance bottleneck in BPE. 
+        This is the major performance bottleneck in BPE.
         ```
         most_frequent_pair, max_count = \
             max(pair_counts.items(), key=lambda kv: (kv[1], kv[0]))
@@ -133,7 +133,7 @@ def find_most_frequent_pair(
         if current_count > 0 and neg_count == -current_count:
             logging.log(logging.INFO, f"Most frequent pair: {pair} with count {current_count}")
             return pair
-    
+
     raise ValueError("No pairs to merge")
 
 
@@ -154,7 +154,7 @@ def new_pretoken_after_merge_pair(
             new_tuple.append(old_pretoken[i])
             i += 1
     return tuple(new_tuple)
-    
+
 
 def merge_pair_and_update_counts(
     pretoken_counts: Dict[Tuple[bytes, ...], int],
@@ -166,8 +166,8 @@ def merge_pair_and_update_counts(
     """
     Merge a byte pair in all pre-tokens, creating new pre-token counts.
 
-    Uses an inverted index (pair -> set of pretoken tuples) to touch only
-    pretokens that actually contain the merged pair.
+    Uses an inverted index (pair -> set of pretoken tuples) to touch ONLY pretokens
+    that actually contain the merged pair, and updates ONLY affected paris.
 
     Args:
         pretoken_counts: Current pre-token counts
@@ -180,56 +180,79 @@ def merge_pair_and_update_counts(
     """
     pair_counts.pop(pair, None)
 
-    # Take affected pretokens (and clear this entry) for early exit and simpler logic
+    # Check if there are affected pretokens (and clear this entry) for early exit
     affected_pretokens = pair_index.pop(pair, set())
     if not affected_pretokens:
         return pretoken_counts, pair_counts, pair_index
 
-    # Process affected pretokens only
-    # e.g. affected pretoken (A, B, C, D) as old tuple, merge pair (B, C) -> new tuple (A, BC, D) 
+    # Process ONLY affected pairs in affected pretokens
+    # e.g. affected pretoken (E, A, B, C, D) as old tuple, merge pair (A, B) -> new tuple (E, AB, C, D)
+    #   affected pairs: (E, A), (A, B), (B, C)
+    #   new pairs: (E, AB), (AB, C)
+    #   un-effected pairs: (C, D)
     for old_tuple in affected_pretokens:
-        count = pretoken_counts.get(old_tuple, 0)
-        if not count:
+        pre_count = pretoken_counts.get(old_tuple, 0)
+        if not pre_count:
             continue
 
         # Remove old pretoken tuple from the map
         pretoken_counts.pop(old_tuple, None)
 
-        # Subtract ALL old pairs of this pretoken
+        delta = {}
+        i = 0
+        new_tuple = []  # Build the new pretoken tuple list by merging the target pair
+        A, B = pair
+        M = A + B  # Merged pair bytes
+        while i < len(old_tuple) - 1:
+            # Detect the merge pair
+            if old_tuple[i:i+2] == pair:
+                L = old_tuple[i-1] if i > 0 else None
+                R = old_tuple[i+2] if i < len(old_tuple) - 2 else None
+                delta[(A, B)] = delta.get((A, B), 0) - pre_count
+                if L is not None:
+                    # decrement (L,A), increment (L,M)
+                    delta[(L, A)] = delta.get((L, A), 0) - pre_count
+                    delta[(L, M)] = delta.get((L, M), 0) + pre_count
+                if R is not None:
+                    # decrement (B,R), increment (M,R)
+                    delta[(B, R)] = delta.get((B, R), 0) - pre_count
+                    delta[(M, R)] = delta.get((M, R), 0) + pre_count
+                new_tuple.append(M)
+                i += 2  # Skip both bytes
+            else:
+                new_tuple.append(old_tuple[i])
+                i += 1
+
+        if i == len(old_tuple) - 1:
+            new_tuple.append(old_tuple[i])
+
+        new_tuple = tuple(new_tuple)  # list -> tuple as key
+
+        for affected_pair, d in delta.items():
+            new_count = pair_counts.get(affected_pair, 0) + d
+            if new_count <= 0:
+                # delete if <= 0; no-op if key missing
+                pair_counts.pop(affected_pair, None)
+            else:
+                pair_counts[affected_pair] = new_count
+                # Push updated pair to heap (lazy deletion handles stale entries)
+                heapq.heappush(pair_heap, (-new_count, _desc_key(affected_pair), affected_pair))
+
+        # Remove old_tuple from all its old pair sets
         for j in range(len(old_tuple) - 1):
-            # Decrement old pair count and delete if <= 0; no-op if key missing
-            old_pair = (old_tuple[j], old_tuple[j + 1])
-            if old_pair in pair_counts.keys():
-                pair_counts[old_pair] -= count
-                if pair_counts[old_pair] <= 0:
-                    pair_counts.pop(old_pair, None)
-                else:
-                    heapq.heappush(pair_heap, (-pair_counts[old_pair], _desc_key(old_pair), old_pair))
+            pj = (old_tuple[j], old_tuple[j+1])
+            s = pair_index.get(pj)
+            if s:
+                s.discard(old_tuple)
+                if not s: pair_index.pop(pj, None)
 
-            # Update inverted index: remove old membership
-            old_pair_index_set = pair_index.get(old_pair)
-            if old_pair_index_set:
-                old_pair_index_set.discard(old_tuple)
-                if not old_pair_index_set:
-                    pair_index.pop(old_pair, None)
-            
-        # Build the new pretoken tuple list by merging the target pair
-        new_tuple = new_pretoken_after_merge_pair(old_tuple, pair)
-
-        # Add ALL new pairs of this pretoken
+        # Add new_tuple to all its new pair sets
         for j in range(len(new_tuple) - 1):
-            # Increment new pair count (create if absent)
-            new_pair = (new_tuple[j], new_tuple[j + 1])
-            pair_counts[new_pair] = pair_counts.get(new_pair, 0) + count
+            pj = (new_tuple[j], new_tuple[j+1])
+            pair_index.setdefault(pj, set()).add(new_tuple)
 
-            # Update inverted index: add new membership
-            pair_index.setdefault(new_pair, set()).add(new_tuple)
-
-            # Push updated pair to heap (lazy deletion handles stale entries)
-            heapq.heappush(pair_heap, (-pair_counts[new_pair], _desc_key(new_pair), new_pair))
-
-        # Add/aggregate the rebuilt pretoken
-        pretoken_counts[new_tuple] = pretoken_counts.get(new_tuple, 0) + count
+        # Add the rebuilt pretoken
+        pretoken_counts[new_tuple] = pretoken_counts.get(new_tuple, 0) + pre_count
 
     logging.log(logging.INFO, f"Merged pair {pair} -> {pair[0] + pair[1]}")
     return pretoken_counts, pair_counts, pair_index, pair_heap
@@ -328,16 +351,15 @@ def run_train_bpe(
             p = Process(target=worker, args=(start, end, input_path, special_tokens, q))
             p.start()
             processes.append(p)
-    
-    all_pretoken_counts = Counter(d := q.get()) 
 
-    # Merge counts
-    for _ in range(1, len(processes)): 
+    # Collect and merge counts from workers
+    all_pretoken_counts = Counter()
+    for _ in range(len(processes)):
         all_pretoken_counts.update(q.get())
 
     for p in processes:
         p.join()
-    
+
     logging.log(logging.INFO, f"Total unique pre-tokens: {len(all_pretoken_counts)}")
 
     # Calculate number of merges needed
