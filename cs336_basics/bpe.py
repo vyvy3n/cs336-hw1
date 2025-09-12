@@ -7,6 +7,7 @@ merge efficiency using incremental pair count updates.
 
 import os
 import logging
+import heapq
 from typing import Dict, List, Tuple, Set
 from collections import defaultdict
 from collections import Counter
@@ -36,11 +37,47 @@ def initialize_vocabulary(special_tokens: List[str] = None) -> Dict[bytes, int]:
     return vocab
 
 
+# Tie-break helper: cached descending key for lexicographically-greater-first ordering.
+#
+# We map each bytes object b to inv(b) = bytes(255 - x for x in b). Because Python's tuple
+# comparison is lexicographic ascending, sorting (inv(a), inv(b)) ascending is equivalent
+# to sorting (a, b) descending. We cache inv(b) to avoid recomputation and allocations.
+_inv_cache: Dict[bytes, bytes] = {}
+
+def _inv(b: bytes) -> bytes:
+    """
+    Return inverted bytes to break ties by preferring lexicographically greater pair.
+
+    Rationale:
+    1.  bytes(255 - x for x in b) is not enough since it preserves the “shorter is smaller” tie-break, 
+        which leads to incorrect merge ordering like choosing (b' ', b'd') before (b' a', b'nd').
+
+    2.  Append a 0xFF sentinel after inverting the bytes. 
+        This flips the prefix tie-break as well, 
+        so ascending order on the mapped key matches descending order on the original bytes.
+    """
+    inv = _inv_cache.get(b)
+    if inv is None:
+        inv = bytes(255 - x for x in b) + b"\xff"
+        _inv_cache[b] = inv
+    return inv
+
+def _desc_key(pair: Tuple[bytes, bytes]) -> Tuple[bytes, bytes]:
+    """
+    Secondary heap key to break ties by preferring lexicographically greater pair.
+    """
+    return (_inv(pair[0]), _inv(pair[1]))
+
+
 def build_pair_counts_and_index(
     pretoken_counts: Dict[Tuple[bytes, ...], int]
-) -> Tuple[Dict[Tuple[bytes, bytes], int], Dict[Tuple[bytes, bytes], Set[Tuple[bytes, ...]]]]:
+) -> Tuple[
+    Dict[Tuple[bytes, bytes], int],
+    Dict[Tuple[bytes, bytes], Set[Tuple[bytes, ...]]],
+    List[Tuple[int, Tuple[bytes, bytes], Tuple[bytes, bytes]]],  # heap entries: (-count, desc_key, pair)
+]:
     """
-    Count all adjacent byte pairs within pre-tokens, and build its inverted index mapping.
+    Count all adjacent byte pairs within pre-tokens, and build inverted index, initialize heap.
 
     Args:
         pretoken_counts: Dictionary mapping pre-token byte tuples to counts
@@ -48,33 +85,56 @@ def build_pair_counts_and_index(
     Returns:
         pair_counts: (byte1, byte2) pair -> its total counts
         pair_index: (byte1, byte2) pair -> set of pretoken tuples that contain it
+        pair_heap: max-heap of (-count, pair) for efficient most frequent pair lookup
     """
     pair_counts = {}
-    # pair_index is a defaultdict where each missing key
-    # automatically creates an empty set as its default value.
     pair_index = defaultdict(set)
 
     for pretoken_tuple, count in pretoken_counts.items():
-        # Count adjacent pairs within this pre-token, and index it
+        # Count adjacent pairs within this pretoken, and index it
         for i in range(len(pretoken_tuple) - 1):
             pair = (pretoken_tuple[i], pretoken_tuple[i + 1])
             pair_counts[pair] = pair_counts.get(pair, 0) + count
             pair_index[pair].add(pretoken_tuple)
 
+    # Initialize heap with all pairs: (-count, tie-break key, pair)
+    # Tie-breaking: prefer lexicographically greater pair via cached descending key
+    pair_heap = [(-count, _desc_key(pair), pair) for pair, count in pair_counts.items()]
+    heapq.heapify(pair_heap)
+
     logging.log(logging.INFO, f"Initialized pair index with {len(pair_index)} unique byte pairs")
-    return pair_counts, pair_index
+    return pair_counts, pair_index, pair_heap
 
 
-def find_most_frequent_pair(pair_counts: Dict[Tuple[bytes, bytes], int]) -> Tuple[bytes, bytes]:
+def find_most_frequent_pair(
+        pair_counts: Dict[Tuple[bytes, bytes], int],
+        pair_heap: List[Tuple[int, Tuple[bytes, bytes], Tuple[bytes, bytes]]]
+    ) -> Tuple[bytes, bytes]:
     """
-    Find the most frequent byte pair, breaking ties lexicographically.
+    Find the most frequent byte pair, breaking ties lexicographically. 
+    Use heap with lazy deletion.
+
+    ATTENTION: 
+        Taking max() over the entire pair counts dict at every merge step takes O(n).
+        Maintain a max-heap of pair counts instead, can reduces it to O(log n).
+        This is the major performance bottleneck in BPE. 
+        ```
+        most_frequent_pair, max_count = \
+            max(pair_counts.items(), key=lambda kv: (kv[1], kv[0]))
+        ```
     """
     if not pair_counts:
         raise ValueError("No pairs to merge")
-    # Pick by (count, pair) so ties prefer lexicographically larger pair
-    most_frequent_pair, max_count = max(pair_counts.items(), key=lambda kv: (kv[1], kv[0]))
-    logging.log(logging.INFO, f"Most frequent pair: {most_frequent_pair} with count {max_count}")
-    return most_frequent_pair
+
+    # ✅ OPTIMIZED: max-heap with lazy deletion, reduces max() O(n) to O(log n)
+    while pair_heap:
+        neg_count, _, pair = heapq.heappop(pair_heap)
+        current_count = pair_counts.get(pair, 0)
+        if current_count > 0 and neg_count == -current_count:
+            logging.log(logging.INFO, f"Most frequent pair: {pair} with count {current_count}")
+            return pair
+    
+    raise ValueError("No pairs to merge")
 
 
 def new_pretoken_after_merge_pair(
@@ -101,7 +161,8 @@ def merge_pair_and_update_counts(
     pair: Tuple[bytes, bytes],
     pair_counts: Dict[Tuple[bytes, bytes], int],
     pair_index: Dict[Tuple[bytes, bytes], Set[Tuple[bytes, ...]]],
-) -> Tuple[Dict[Tuple[bytes, ...], int], Dict[Tuple[bytes, bytes], int], Dict[Tuple[bytes, bytes], Set[Tuple[bytes, ...]]]]:
+    pair_heap: List[Tuple[int, Tuple[bytes, bytes], Tuple[bytes, bytes]]],
+):
     """
     Merge a byte pair in all pre-tokens, creating new pre-token counts.
 
@@ -117,10 +178,7 @@ def merge_pair_and_update_counts(
     Returns:
         Tuple of (updated_pretoken_counts, updated_pair_counts, updated_pair_index)
     """
-    # Copy; only updated pairs count and index in affected tokens
-    new_pair_counts = pair_counts.copy()
-    new_pair_counts.pop(pair, None)
-    new_pretoken_counts = pretoken_counts.copy()
+    pair_counts.pop(pair, None)
 
     # Take affected pretokens (and clear this entry) for early exit and simpler logic
     affected_pretokens = pair_index.pop(pair, set())
@@ -135,17 +193,19 @@ def merge_pair_and_update_counts(
             continue
 
         # Remove old pretoken tuple from the map
-        new_pretoken_counts.pop(old_tuple, None)
+        pretoken_counts.pop(old_tuple, None)
 
         # Subtract ALL old pairs of this pretoken
         for j in range(len(old_tuple) - 1):
             # Decrement old pair count and delete if <= 0; no-op if key missing
             old_pair = (old_tuple[j], old_tuple[j + 1])
-            if old_pair in new_pair_counts.keys():
-                new_pair_counts[old_pair] -= count
-                if new_pair_counts[old_pair] <= 0:
-                    new_pair_counts.pop(old_pair, None)
-        
+            if old_pair in pair_counts.keys():
+                pair_counts[old_pair] -= count
+                if pair_counts[old_pair] <= 0:
+                    pair_counts.pop(old_pair, None)
+                else:
+                    heapq.heappush(pair_heap, (-pair_counts[old_pair], _desc_key(old_pair), old_pair))
+
             # Update inverted index: remove old membership
             old_pair_index_set = pair_index.get(old_pair)
             if old_pair_index_set:
@@ -160,16 +220,19 @@ def merge_pair_and_update_counts(
         for j in range(len(new_tuple) - 1):
             # Increment new pair count (create if absent)
             new_pair = (new_tuple[j], new_tuple[j + 1])
-            new_pair_counts[new_pair] = new_pair_counts.get(new_pair, 0) + count
+            pair_counts[new_pair] = pair_counts.get(new_pair, 0) + count
 
             # Update inverted index: add new membership
             pair_index.setdefault(new_pair, set()).add(new_tuple)
 
+            # Push updated pair to heap (lazy deletion handles stale entries)
+            heapq.heappush(pair_heap, (-pair_counts[new_pair], _desc_key(new_pair), new_pair))
+
         # Add/aggregate the rebuilt pretoken
-        new_pretoken_counts[new_tuple] = new_pretoken_counts.get(new_tuple, 0) + count
+        pretoken_counts[new_tuple] = pretoken_counts.get(new_tuple, 0) + count
 
     logging.log(logging.INFO, f"Merged pair {pair} -> {pair[0] + pair[1]}")
-    return new_pretoken_counts, new_pair_counts, pair_index
+    return pretoken_counts, pair_counts, pair_index, pair_heap
 
 
 def train_bpe_on_pretokens(
@@ -195,10 +258,9 @@ def train_bpe_on_pretokens(
     # Initialize vocabulary with special tokens first, then bytes
     vocab = initialize_vocabulary(special_tokens)
     token_id = len(vocab)
-    current_pretokens = pretoken_counts.copy()
 
     # Build initial pair counts and inverted index
-    pair_counts, pair_index = build_pair_counts_and_index(pretoken_counts)
+    pair_counts, pair_index, pair_heap = build_pair_counts_and_index(pretoken_counts)
 
     for merge_step in range(num_merges):
         logging.log(logging.INFO, f"Merge step {merge_step + 1}/{num_merges}")
@@ -208,7 +270,7 @@ def train_bpe_on_pretokens(
             break
 
         # Find most frequent pair
-        most_frequent_pair = find_most_frequent_pair(pair_counts)
+        most_frequent_pair = find_most_frequent_pair(pair_counts, pair_heap)
         merges.append(most_frequent_pair)
 
         # Add merged token to vocabulary
@@ -217,8 +279,8 @@ def train_bpe_on_pretokens(
         token_id += 1
 
         # ✅ OPTIMIZED: Merge only affected pretokens using the inverted index and update counts
-        current_pretokens, pair_counts, pair_index = merge_pair_and_update_counts(
-            current_pretokens, most_frequent_pair, pair_counts, pair_index
+        pretoken_counts, pair_counts, pair_index, pair_heap = merge_pair_and_update_counts(
+            pretoken_counts, most_frequent_pair, pair_counts, pair_index, pair_heap
         )
 
     logging.log(logging.INFO, f"Completed {len(merges)} merges, final vocab size: {len(vocab)}")
