@@ -183,7 +183,7 @@ def merge_pair_and_update_counts(
     # Check if there are affected pretokens (and clear this entry) for early exit
     affected_pretokens = pair_index.pop(pair, set())
     if not affected_pretokens:
-        return pretoken_counts, pair_counts, pair_index
+        return pretoken_counts, pair_counts, pair_index, pair_heap
 
     # Process ONLY affected pairs in affected pretokens
     # e.g. affected pretoken (E, A, B, C, D) as old tuple, merge pair (A, B) -> new tuple (E, AB, C, D)
@@ -285,8 +285,10 @@ def train_bpe_on_pretokens(
     # Build initial pair counts and inverted index
     pair_counts, pair_index, pair_heap = build_pair_counts_and_index(pretoken_counts)
 
+    log_interval = max(1, num_merges // 100)
     for merge_step in range(num_merges):
-        logging.log(logging.INFO, f"Merge step {merge_step + 1}/{num_merges}")
+        if merge_step % log_interval == 0:
+            logging.log(logging.INFO, f"Merge step {merge_step + 1}/{num_merges}")
 
         if not pair_counts:
             logging.log(logging.INFO, "No more pairs to merge")
@@ -305,7 +307,7 @@ def train_bpe_on_pretokens(
         pretoken_counts, pair_counts, pair_index, pair_heap = merge_pair_and_update_counts(
             pretoken_counts, most_frequent_pair, pair_counts, pair_index, pair_heap
         )
-
+    
     logging.log(logging.INFO, f"Completed {len(merges)} merges, final vocab size: {len(vocab)}")
     return merges, vocab
 
@@ -382,19 +384,36 @@ def run_train_bpe(
 
 
 if __name__ == "__main__":
-    # Test with small example
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    ### Test with small example
 
+    # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    # test_text = "low low low low low<|endoftext|>lower lower<|endoftext|>widest widest widest<|endoftext|>newest newest newest newest newest newest"
-    test_text = "low low low<|endoftext|> lower lower"
-    pretoken_counts = count_pretokens(test_text, ["<|endoftext|>"])
+    # # test_text = "low low low low low<|endoftext|>lower lower<|endoftext|>widest widest widest<|endoftext|>newest newest newest newest newest newest"
+    # test_text = "low low low<|endoftext|> lower lower"
+    # pretoken_counts = count_pretokens(test_text, ["<|endoftext|>"])
 
-    # print("Original pre-token counts:")
-    # for k, v in sorted(pretoken_counts.items(), key=lambda x: x[1], reverse=True):
-    #     print(f"{k}: {v}")
+    # # print("Original pre-token counts:")
+    # # for k, v in sorted(pretoken_counts.items(), key=lambda x: x[1], reverse=True):
+    # #     print(f"{k}: {v}")
 
-    merges, vocab = train_bpe_on_pretokens(pretoken_counts, 6, ["<|endoftext|>"])
+    # merges, vocab = train_bpe_on_pretokens(pretoken_counts, 6, ["<|endoftext|>"])
 
-    print(f"\nMerges: {merges}")
-    print(f"Final vocab size: {len(vocab)}")
+    # print(f"\nMerges: {merges}")
+    # print(f"Final vocab size: {len(vocab)}")
+
+    
+    ###########
+    # Answers #
+    ###########
+
+    # uv run python -m cs336_basics.bpe
+    import time, os
+    file_name = "data/TinyStoriesV2-GPT4-train.txt"; vocab_size = 10000
+    # file_name = "data/owt_train.txt"; vocab_size = 32000
+    num_processes = os.cpu_count()
+
+    # Training
+    start = time.perf_counter()
+    vocab, merges = run_train_bpe(file_name, vocab_size, ["<|endoftext|>"], num_processes)
+    elapsed_s = time.perf_counter() - start
+    print(f"time: {elapsed_s:.2f}s")
