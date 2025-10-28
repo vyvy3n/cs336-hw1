@@ -19,6 +19,9 @@ dependencies = [
     "tqdm>=4.67.1",
     "wandb>=0.19.7",
     "ty>=0.0.1a16",
+    "ipykernel>=7.0.1",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.7",
 ]
 
 [build-system]
