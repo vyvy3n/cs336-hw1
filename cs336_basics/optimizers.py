@@ -165,3 +165,85 @@ class AdamW(torch.optim.Optimizer):
                 # Apply weight decay (decoupled from gradient update)
                 # theta = theta - lambda * lr * theta
                 p.data.mul_(1 - weight_decay * lr)
+
+
+def get_lr_cosine_schedule(
+    it: int,
+    max_learning_rate: float,
+    min_learning_rate: float,
+    warmup_iters: int,
+    cosine_cycle_iters: int,
+) -> float:
+    """
+    Given the parameters of a cosine learning rate decay schedule (with linear
+    warmup) and an iteration number, return the learning rate at the given
+    iteration under the specified schedule.
+
+    The schedule has three phases:
+    1. Warm-up (0 <= t < T_w): Linear increase from 0 to max_learning_rate
+    2. Cosine annealing (T_w <= t <= T_c): Cosine decay from max to min learning rate
+    3. Post-annealing (t > T_c): Constant at min_learning_rate
+
+    Args:
+        it (int): Current iteration number (t).
+        max_learning_rate (float): alpha_max, the maximum learning rate.
+        min_learning_rate (float): alpha_min, the minimum/final learning rate.
+        warmup_iters (int): T_w, the number of iterations to linearly warm-up.
+        cosine_cycle_iters (int): T_c, the number of cosine annealing iterations.
+
+    Returns:
+        float: Learning rate at the given iteration.
+    """
+    # Warm-up phase: linear increase from 0 to max_learning_rate
+    if it < warmup_iters:
+        return (it / warmup_iters) * max_learning_rate
+
+    # Cosine annealing phase
+    elif it <= cosine_cycle_iters:
+        # Calculate the cosine annealing factor
+        # Formula: alpha_t = alpha_min + 0.5 * (1 + cos((t - T_w) * pi / (T_c - T_w))) * (alpha_max - alpha_min)
+        progress = (it - warmup_iters) / (cosine_cycle_iters - warmup_iters)
+        cosine_factor = 0.5 * (1 + math.cos(math.pi * progress))
+        return min_learning_rate + cosine_factor * (max_learning_rate - min_learning_rate)
+
+    # Post-annealing phase: constant at min_learning_rate
+    else:
+        return min_learning_rate
+
+
+def gradient_clipping(parameters: Iterable, max_l2_norm: float, eps: float = 1e-6) -> None:
+    """
+    Clip gradients of parameters to have L2 norm at most max_l2_norm, modifies in-place.
+
+    Args:
+        parameters (Iterable): Iterable of parameters (typically model.parameters()).
+        max_l2_norm (float): Maximum L2 norm for the gradients.
+        eps (float): Small value added for numerical stability (default: 1e-6).
+
+    The algorithm:
+    1. Compute the total L2 norm: ||g||_2 = sqrt(sum(||g_i||_2^2)) for all parameter gradients
+    2. If ||g||_2 > max_l2_norm, scale all gradients by: max_l2_norm / (||g||_2 + eps)
+    """
+    # Collect all gradients from parameters that have gradients
+    gradients = []
+    for param in parameters:
+        if param.grad is not None:
+            gradients.append(param.grad)
+
+    # If no gradients, nothing to clip
+    if len(gradients) == 0:
+        return
+
+    # Compute the total L2 norm of all gradients
+    # ||g||_2 = sqrt(sum(||g_i||_2^2))
+    total_norm = torch.sqrt(sum(torch.sum(g ** 2) for g in gradients))
+
+    # Compute the clipping factor
+    # If total_norm <= max_l2_norm, clip_factor >= 1, so no clipping occurs
+    # If total_norm > max_l2_norm, clip_factor < 1, so gradients are scaled down
+    clip_factor = max_l2_norm / (total_norm + eps)
+
+    # Only clip if the norm exceeds the maximum
+    if clip_factor < 1.0:
+        for grad in gradients:
+            grad.mul_(clip_factor)
