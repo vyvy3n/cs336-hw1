@@ -129,13 +129,12 @@ class Softmax(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Numerically-stable softmax along dimension `self.dim_i`.
-        Uses in-place operations to reduce memory traffic.
         """
-        # Subtract max for numerical stability, then exponentiate in-place
+        # Subtract max for numerical stability, then exponentiate
         y = x - torch.amax(x, dim=self.i, keepdim=True)
-        y = y.exp_()
-        # Normalize in-place
-        y /= torch.sum(y, dim=self.i, keepdim=True)
+        y = torch.exp(y)
+        # Normalize
+        y = y / torch.sum(y, dim=self.i, keepdim=True)
         return y
 
 
