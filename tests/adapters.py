@@ -173,6 +173,7 @@ def run_multihead_self_attention_with_rope(
     v_proj_weight: Float[Tensor, " d_v d_in"],
     o_proj_weight: Float[Tensor, " d_model d_v"],
     in_features: Float[Tensor, " ... sequence_length d_in"],
+    token_positions: Float[Tensor, " ... sequence_length"] | None = None,
 ) -> Float[Tensor, " ... sequence_length d_out"]:
     """
     Given the key, query, and value projection weights of a naive unbatched
@@ -201,7 +202,7 @@ def run_multihead_self_attention_with_rope(
     """
     from cs336_basics.models import MultiheadSelfAttention
 
-    attn = MultiheadSelfAttention(d_model, num_heads, use_rope=True, 
+    attn = MultiheadSelfAttention(d_model, num_heads, use_rope=True,
                                   max_seq_len=max_seq_len, theta=theta)
     attn.load_state_dict({
         "q_proj.weight": q_proj_weight,
@@ -209,7 +210,7 @@ def run_multihead_self_attention_with_rope(
         "v_proj.weight": v_proj_weight,
         "o_proj.weight": o_proj_weight,
     }, strict=True)
-    return attn(in_features)
+    return attn(in_features, token_positions)
 
 
 def run_rope(
@@ -524,7 +525,8 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    from cs336_basics.utils import get_batch
+    return get_batch(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -639,7 +641,9 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    from cs336_basics.utils import save_checkpoint
+
+    save_checkpoint(model, optimizer, iteration, out)
 
 
 def run_load_checkpoint(
@@ -660,7 +664,9 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    from cs336_basics.utils import load_checkpoint
+
+    return load_checkpoint(src, model, optimizer)
 
 
 def get_tokenizer(
