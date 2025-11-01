@@ -103,6 +103,10 @@ class MultiheadSelfAttention(nn.Module):
             if token_positions is None:
                 token_positions = torch.arange(seq_len, device=x.device).unsqueeze(0).expand(batch_size, -1)
 
+            # Add head dimension for broadcasting: (batch_size, seq_len) -> (batch_size, 1, seq_len)
+            # This allows broadcasting to (batch_size, num_heads, seq_len, d_head)
+            token_positions = token_positions.unsqueeze(1)
+
             Q = self.rope(Q, token_positions)
             K = self.rope(K, token_positions)
 
