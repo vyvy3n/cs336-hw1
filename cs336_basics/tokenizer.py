@@ -54,6 +54,7 @@ class Tokenizer:
         special_tokens: Optional[List[str]] = None,
     ) -> "Tokenizer":
         # Load vocab (expects JSON mapping of token_id -> string token). Convert to bytes.
+        # Note: Ġ (U+0120) is used to represent space characters (GPT-2 convention)
         with open(vocab_filepath, "r", encoding="utf-8") as f:
             raw_vocab = json.load(f)
         # Keys may be strings; normalize to int
@@ -61,6 +62,8 @@ class Tokenizer:
         for k, v in raw_vocab.items():
             token_id = int(k)
             if isinstance(v, str):
+                # Replace Ġ with space
+                v = v.replace('Ġ', ' ')
                 vocab[token_id] = v.encode("utf-8")
             elif isinstance(v, list):  # optionally support list of byte values
                 vocab[token_id] = bytes(v)
@@ -68,6 +71,7 @@ class Tokenizer:
                 raise ValueError("Unsupported vocab value type; expected str or list[int]")
 
         # Load merges as plain text: each line "token1 token2" (strings) -> bytes via utf-8
+        # Note: Ġ (U+0120) is used to represent space characters (GPT-2 convention)
         merges: List[Tuple[bytes, bytes]] = []
         with open(merges_filepath, "r", encoding="utf-8") as f:
             for line in f:
@@ -78,6 +82,9 @@ class Tokenizer:
                 if len(parts) != 2:
                     continue
                 left, right = parts
+                # Replace Ġ with space
+                left = left.replace('Ġ', ' ')
+                right = right.replace('Ġ', ' ')
                 merges.append((left.encode("utf-8"), right.encode("utf-8")))
 
         return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
