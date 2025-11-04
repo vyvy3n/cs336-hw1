@@ -12,8 +12,8 @@ Algorithm:
 5. Repeat until we find the exact maximum
 
 Usage:
-    python experiments/find_max_batch_size.py --device cuda
-    python experiments/find_max_batch_size.py --device cuda --upper_bound 4096
+    python scripts/find_max_batch_size.py --device cuda
+    python scripts/find_max_batch_size.py --device cuda --upper_bound 4096
 """
 
 import argparse

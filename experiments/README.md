@@ -1,6 +1,6 @@
-# Learning Rate Experiments
+# Experiments
 
-This directory contains scripts for running learning rate hyperparameter sweep experiments as specified in the assignment.
+This directory contains scripts for running various experiments including dataset comparison, learning rate sweeps, batch size sweeps, and architecture ablations.
 
 ## Overview
 
@@ -64,28 +64,41 @@ Enter your API key when prompted. This enables experiment tracking and visualiza
 
 ## Running Experiments
 
-### Quick Test (Recommended First)
+### 1. OpenWebText Training & Comparison
 
-Test your setup with a short training run:
+Train on OpenWebText and compare with TinyStories to understand dataset effects.
+
+#### Quick Test (100 iterations)
 
 ```bash
-# Quick test with 1000 iterations (~5 minutes on GPU)
-uv run python experiments/quick_lr_test.py \
-    --learning_rate 3e-4 \
-    --max_iters 1000 \
-    --device cuda \
-    --use_wandb
+# Test OWT training only
+uv run python experiments/train_owt.py --device cuda --max_iters 100
 
-# Test without W&B
-uv run python experiments/quick_lr_test.py \
-    --learning_rate 3e-4 \
-    --max_iters 1000 \
-    --device cuda
+# Test both datasets
+uv run python experiments/compare_datasets.py --device cuda --max_iters 100
 ```
 
-### Full Learning Rate Sweep
+#### Full Training (5000 iterations, same as TinyStories)
 
-#### Part (a): Grid Sweep
+```bash
+# Train on OWT only
+uv run python experiments/train_owt.py --device cuda --use_wandb
+
+# Compare both datasets (recommended)
+uv run python experiments/compare_datasets.py --device cuda --use_wandb
+```
+
+**Expected Results:**
+- OpenWebText will have **higher loss** than TinyStories
+- OWT is more diverse, complex, and realistic → harder to model
+- TinyStories is simpler and more repetitive → easier to model
+- Lower loss ≠ better model (depends on target domain)
+
+---
+
+### 2. Learning Rate Sweep
+
+#### Grid Sweep
 
 Perform a hyperparameter sweep over multiple learning rates:
 
@@ -94,17 +107,11 @@ Perform a hyperparameter sweep over multiple learning rates:
 uv run python experiments/learning_rate_sweep.py \
     --sweep_type grid \
     --device cuda
-
-# Quick grid sweep for testing (1000 iters per LR)
-uv run python experiments/learning_rate_sweep.py \
-    --sweep_type grid \
-    --device cuda \
-    --max_iters 1000
 ```
 
 This tests learning rates: `[1e-5, 5e-5, 1e-4, 3e-4, 5e-4, 1e-3, 3e-3, 5e-3]`
 
-#### Part (b): Stability Sweep
+#### Stability Sweep
 
 Find the "edge of stability" by gradually increasing learning rate until divergence:
 
@@ -113,12 +120,6 @@ Find the "edge of stability" by gradually increasing learning rate until diverge
 uv run python experiments/learning_rate_sweep.py \
     --sweep_type stability \
     --device cuda
-
-# Quick stability sweep for testing
-uv run python experiments/learning_rate_sweep.py \
-    --sweep_type stability \
-    --device cuda \
-    --max_iters 1000
 ```
 
 #### Both Sweeps
@@ -142,25 +143,17 @@ uv run python experiments/learning_rate_sweep.py \
     --no_wandb
 ```
 
-### CPU/MPS Training
+### CPU Training
 
-For CPU or Apple Silicon (MPS):
+For CPU:
 
 ```bash
-# CPU
 uv run python experiments/learning_rate_sweep.py \
     --sweep_type grid \
-    --device cpu \
-    --max_iters 5000
-
-# Apple Silicon (MPS)
-uv run python experiments/learning_rate_sweep.py \
-    --sweep_type grid \
-    --device mps \
-    --max_iters 5000
+    --device cpu
 ```
 
-**Note:** As per assignment instructions, for CPU/MPS you may want to reduce total tokens to 40,000,000 and increase target validation loss to 2.00.
+**Note:** CPU training will be significantly slower than GPU training.
 
 ## Expected Runtime
 
@@ -241,17 +234,6 @@ After running the stability sweep:
 
 ## Troubleshooting
 
-### Out of Memory (OOM)
-
-If you get OOM errors:
-
-```bash
-# Reduce batch size
-uv run python experiments/quick_lr_test.py \
-    --batch_size 16 \
-    --learning_rate 3e-4
-```
-
 ### Dataset Not Found
 
 Make sure you've run the data preparation script:
@@ -260,50 +242,62 @@ Make sure you've run the data preparation script:
 uv run python scripts/prepare_tinystories.py --vocab_size 10000
 ```
 
-### Training Diverges Immediately
+### Out of Memory (OOM)
 
-This usually means the learning rate is too high. Try:
+If you get OOM errors, you can find the maximum batch size that fits in your GPU:
 
 ```bash
-# Test with a smaller learning rate
-uv run python experiments/quick_lr_test.py \
-    --learning_rate 1e-4 \
-    --max_iters 1000
+# Find max batch size using binary search
+uv run python scripts/find_max_batch_size.py --device cuda
+
+# Then use that batch size in your experiments
+uv run python experiments/batch_size_sweep.py --device cuda --batch_sizes 16,32,64
 ```
+
+### Training Diverges Immediately
+
+This usually means the learning rate is too high. Try a smaller learning rate in the sweep.
 
 ### Slow Training
 
 - Make sure you're using GPU: `--device cuda`
 - Check that CUDA is available: `python -c "import torch; print(torch.cuda.is_available())"`
-- Reduce `eval_iters` and `eval_interval` for faster iteration
 
 ## File Structure
 
 ```
 experiments/
 ├── README.md                    # This file
-├── learning_rate_sweep.py       # Main experiment script
-└── quick_lr_test.py            # Quick testing script
+├── train_owt.py                 # Train on OpenWebText
+├── compare_datasets.py          # Compare TinyStories vs OpenWebText
+├── learning_rate_sweep.py       # Learning rate sweep experiments
+├── batch_size_sweep.py          # Batch size sweep experiments
+└── ablations.py                 # Architecture ablation experiments
 
 scripts/
-└── prepare_tinystories.py      # Dataset preparation
+├── prepare_tinystories.py       # Dataset preparation
+└── find_max_batch_size.py       # Find max batch size before OOM
 
 checkpoints/
-└── lr_sweep/                   # Saved model checkpoints
+├── tinystories/                 # TinyStories checkpoints
+├── owt/                         # OpenWebText checkpoints
+├── lr_sweep/                    # LR sweep checkpoints
+└── ablations/                   # Ablation checkpoints
 
 data/
-├── TinyStories_train.npy       # Training tokens
-├── TinyStories_valid.npy       # Validation tokens
-└── tokenizer_v10000.json       # BPE tokenizer
+├── tinystories_train_tokens.npy  # TinyStories training tokens
+├── tinystories_valid_tokens.npy  # TinyStories validation tokens
+├── owt_train_tokens.npy          # OpenWebText training tokens
+├── owt_valid_tokens.npy          # OpenWebText validation tokens
+└── tokenizer_v10000.json         # BPE tokenizer
 ```
 
 ## Tips
 
-1. **Start small**: Run `quick_lr_test.py` first to verify everything works
-2. **Use W&B**: It makes comparing runs much easier
-3. **Monitor early**: Check the first few hundred iterations - if loss isn't decreasing, stop and adjust
-4. **Save results**: W&B automatically saves everything, but you can also export CSVs
-5. **Document**: Keep notes on what you observe for your report
+1. **Use W&B**: It makes comparing runs much easier
+2. **Monitor early**: Check the first few hundred iterations - if loss isn't decreasing, stop and adjust
+3. **Save results**: W&B automatically saves everything, but you can also export CSVs
+4. **Document**: Keep notes on what you observe for your report
 
 ## Assignment Deliverables
 

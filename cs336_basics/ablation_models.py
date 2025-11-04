@@ -9,7 +9,7 @@ This module provides modified Transformer components for ablation studies:
 
 import torch
 import torch.nn as nn
-from cs336_basics.layers import Linear, RMSNorm, Softmax, RotaryPositionalEmbedding
+from cs336_basics.layers import Linear, RMSNorm, Softmax, RotaryPositionalEmbedding, Embedding
 
 
 class SiLUFFN(nn.Module):
@@ -212,7 +212,7 @@ class TransformerLMAblation(nn.Module):
         self.ablation_type = ablation_type
 
         # Token embedding
-        self.token_embeddings = nn.Embedding(vocab_size, d_model, device=device, dtype=dtype)
+        self.token_embeddings = Embedding(vocab_size, d_model, device=device, dtype=dtype)
         
         # Choose block type based on ablation
         if ablation_type == "no_rmsnorm":
@@ -258,4 +258,3 @@ class TransformerLMAblation(nn.Module):
 
         # Output projection
         return self.lm_head(x)
-

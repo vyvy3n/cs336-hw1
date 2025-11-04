@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from cs336_basics.config import TrainingConfig, ModelConfig, OptimizerConfig, SchedulerConfig, DataConfig
-from cs336_basics.training import train
+from cs336_basics.training import Trainer
 
 
 def test_training():
@@ -65,7 +65,8 @@ def test_training():
     
     try:
         # Run training
-        train(config)
+        trainer = Trainer(config)
+        trainer.train()
         print("\n" + "=" * 80)
         print("✓ Training test PASSED!")
         print("=" * 80)

@@ -22,9 +22,9 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from experiments.experiment_utils import create_base_config, print_experiment_header
+from cs336_basics.config import TrainingConfig, ModelConfig, DataConfig, OptimizerConfig
 from cs336_basics.training import Trainer
-from cs336_basics.utils import setup_device
+from cs336_basics.utils import setup_device, print_experiment_header
 
 
 def run_experiment(ablation: str, learning_rate: float, device: str, use_wandb: bool = True):
@@ -38,13 +38,18 @@ def run_experiment(ablation: str, learning_rate: float, device: str, use_wandb: 
         use_wandb: Whether to use W&B logging
     """
     # Create base config
-    config = create_base_config(
-        learning_rate=learning_rate,
+    config = TrainingConfig(
+        model=ModelConfig(vocab_size=10000),
+        data=DataConfig(
+            train_data_path="data/tinystories_train_tokens.npy",
+            val_data_path="data/tinystories_valid_tokens.npy",
+        ),
+        optimizer=OptimizerConfig(learning_rate=learning_rate),
         checkpoint_dir="checkpoints/ablations",
         wandb_project="cs336-ablations",
+        use_wandb=use_wandb,
         device=device,
     )
-    config.use_wandb = use_wandb
 
     # Set ablation-specific configuration
     ablation_configs = {

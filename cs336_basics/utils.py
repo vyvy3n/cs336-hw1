@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import os
-from typing import BinaryIO, IO, Optional
+from typing import BinaryIO, IO
 
 
 ### Data utils for language modeling
@@ -99,6 +99,27 @@ def load_checkpoint(
     return checkpoint['iteration']
 
 
+def get_checkpoint_paths(checkpoint_dir: str, iteration: int) -> tuple[str, str]:
+    """
+    Generate checkpoint file paths.
+
+    Args:
+        checkpoint_dir: Directory to save checkpoints
+        iteration: Current iteration number
+
+    Returns:
+        Tuple of (numbered_checkpoint_path, latest_checkpoint_path)
+
+    Example:
+        >>> numbered, latest = get_checkpoint_paths("checkpoints", 1000)
+        >>> print(numbered)  # "checkpoints/checkpoint_iter_1000.pt"
+        >>> print(latest)    # "checkpoints/checkpoint_latest.pt"
+    """
+    numbered = os.path.join(checkpoint_dir, f"checkpoint_iter_{iteration}.pt")
+    latest = os.path.join(checkpoint_dir, "checkpoint_latest.pt")
+    return numbered, latest
+
+
 ### Device and GPU utilities
 
 
@@ -132,60 +153,6 @@ def setup_device(requested_device: str = "cuda", verbose: bool = True) -> str:
             else:
                 print("\n⚠️  Using CPU\n")
         return "cpu"
-
-
-### Loss computation utilities
-
-
-def compute_loss(
-    logits: torch.Tensor,
-    targets: torch.Tensor,
-    loss_fn,
-) -> torch.Tensor:
-    """
-    Compute cross-entropy loss from logits and targets.
-
-    Flattens logits and targets before computing loss.
-
-    Args:
-        logits: Model output of shape (batch_size, seq_len, vocab_size)
-        targets: Target token IDs of shape (batch_size, seq_len)
-        loss_fn: Loss function (e.g., CrossEntropyLoss instance)
-
-    Returns:
-        Scalar loss tensor
-
-    Example:
-        >>> logits = model(x)  # shape: (32, 256, 10000)
-        >>> loss = compute_loss(logits, y, loss_fn)
-    """
-    logits_flat = logits.view(-1, logits.size(-1))
-    targets_flat = targets.view(-1)
-    return loss_fn(logits_flat, targets_flat)
-
-
-### Checkpoint path utilities
-
-
-def get_checkpoint_paths(checkpoint_dir: str, iteration: int) -> tuple[str, str]:
-    """
-    Generate checkpoint file paths.
-
-    Args:
-        checkpoint_dir: Directory to save checkpoints
-        iteration: Current iteration number
-
-    Returns:
-        Tuple of (numbered_checkpoint_path, latest_checkpoint_path)
-
-    Example:
-        >>> numbered, latest = get_checkpoint_paths("checkpoints", 1000)
-        >>> print(numbered)  # "checkpoints/checkpoint_iter_1000.pt"
-        >>> print(latest)    # "checkpoints/checkpoint_latest.pt"
-    """
-    numbered = os.path.join(checkpoint_dir, f"checkpoint_iter_{iteration}.pt")
-    latest = os.path.join(checkpoint_dir, "checkpoint_latest.pt")
-    return numbered, latest
 
 
 ### Weights & Biases utilities
@@ -249,3 +216,54 @@ def set_seed(seed: int):
     np.random.seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+### Experiment utilities
+
+
+def print_experiment_header(title: str, params: dict):
+    """
+    Print a formatted experiment header.
+
+    Args:
+        title: Experiment title
+        params: Dictionary of parameters to display
+
+    Example:
+        >>> print_experiment_header("Batch Size Sweep", {"batch_size": 32, "lr": 1e-3})
+        ================================================================================
+        Batch Size Sweep
+        ================================================================================
+        batch_size: 32
+        lr: 0.001
+        ================================================================================
+    """
+    print(f"\n{'='*80}")
+    print(f"{title}")
+    print(f"{'='*80}")
+    for key, value in params.items():
+        print(f"{key}: {value}")
+    print(f"{'='*80}\n")
+
+
+def handle_oom_error(batch_size: int) -> bool:
+    """
+    Handle out-of-memory errors during training.
+
+    Args:
+        batch_size: The batch size that caused OOM
+
+    Returns:
+        False (indicating failure)
+
+    Example:
+        >>> if not handle_oom_error(512):
+        ...     print("Need to reduce batch size")
+        ✗ Out of Memory
+        Batch size 512 is too large for available GPU memory
+    """
+    print(f"\n✗ Out of Memory")
+    print(f"Batch size {batch_size} is too large for available GPU memory\n")
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return False

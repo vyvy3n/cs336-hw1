@@ -12,7 +12,25 @@ including support for:
 from typing import Optional, List
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
+
+def softmax(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
+    """
+    Numerically-stable softmax along the specified dimension.
+
+    Args:
+        x: Input tensor
+        dim: Dimension to apply softmax to
+
+    Returns:
+        Tensor with softmax applied along the specified dimension
+    """
+    # Subtract max for numerical stability, then exponentiate
+    y = x - torch.amax(x, dim=dim, keepdim=True)
+    y = torch.exp(y)
+    # Normalize
+    y = y / torch.sum(y, dim=dim, keepdim=True)
+    return y
 
 
 def sample_from_logits(
@@ -22,23 +40,25 @@ def sample_from_logits(
 ) -> torch.Tensor:
     """
     Sample a token from logits with optional temperature scaling and top-p sampling.
-    
+
     Args:
         logits: Logits tensor of shape (vocab_size,)
-        temperature: Temperature for scaling logits. Higher values make distribution
-                    more uniform, lower values make it more peaked. Must be > 0.
+        temperature: Temperature for scaling logits. Must be > 0.
+                    higher values make distribution more uniform,
+                    lower values make distribution more peaked,
+                    -> 0 makes the largest logits dominate so that the output of softmax becomes one-hot.
         top_p: If provided, only sample from the smallest set of tokens whose
               cumulative probability exceeds top_p (nucleus sampling).
-    
+
     Returns:
         Sampled token ID as a scalar tensor
     """
     # Apply temperature scaling
     if temperature != 1.0:
         logits = logits / temperature
-    
+
     # Convert logits to probabilities
-    probs = F.softmax(logits, dim=-1)
+    probs = softmax(logits, dim=-1)
     
     # Apply top-p (nucleus) sampling if specified
     if top_p is not None and top_p < 1.0:
@@ -218,4 +238,3 @@ def generate_batch(
         generated_texts.append(text)
     
     return generated_texts
-

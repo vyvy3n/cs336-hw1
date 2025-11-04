@@ -17,10 +17,10 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from experiments.experiment_utils import create_base_config, print_experiment_header, handle_oom_error
 import torch
+from cs336_basics.config import TrainingConfig, ModelConfig, DataConfig, OptimizerConfig
 from cs336_basics.training import Trainer
-from cs336_basics.utils import setup_device
+from cs336_basics.utils import setup_device, print_experiment_header, handle_oom_error
 
 
 def run_single_experiment(batch_size: int, learning_rate: float, run_name: str, device: str, use_wandb: bool):
@@ -34,15 +34,20 @@ def run_single_experiment(batch_size: int, learning_rate: float, run_name: str, 
         device: Device to use for training
         use_wandb: Whether to use W&B logging
     """
-    config = create_base_config(
-        batch_size=batch_size,
-        learning_rate=learning_rate,
+    config = TrainingConfig(
+        model=ModelConfig(vocab_size=10000),
+        data=DataConfig(
+            train_data_path="data/tinystories_train_tokens.npy",
+            val_data_path="data/tinystories_valid_tokens.npy",
+            batch_size=batch_size,
+        ),
+        optimizer=OptimizerConfig(learning_rate=learning_rate),
         checkpoint_dir=f"checkpoints/batch_size_sweep/{run_name}",
         wandb_project="cs336-batch-size-sweep",
+        wandb_run_name=run_name,
+        use_wandb=use_wandb,
         device=device,
     )
-    config.use_wandb = use_wandb
-    config.wandb_run_name = run_name
 
     total_tokens = batch_size * config.scheduler.max_iters * config.data.context_length
     print_experiment_header(
@@ -74,7 +79,7 @@ def run_single_experiment(batch_size: int, learning_rate: float, run_name: str, 
 
 
 def batch_size_sweep(device: str, use_wandb: bool, optimize_lr: bool = False, base_lr: float = 3e-4,
-                     batch_sizes: list[int] = None, find_max: bool = False):
+                     batch_sizes: list[int] = None):
     """
     Perform a sweep over batch sizes.
 
@@ -84,36 +89,11 @@ def batch_size_sweep(device: str, use_wandb: bool, optimize_lr: bool = False, ba
         optimize_lr: Whether to scale learning rate with batch size
         base_lr: Base learning rate (for batch_size=32)
         batch_sizes: Specific batch sizes to test (if None, use default range)
-        find_max: Whether to automatically find and include maximum batch size
     """
     # Test batch sizes from 1 to GPU memory limit
     # Include typical sizes: 1, 2, 4, 8, 16, 32, 64, 128, 256, 512
     if batch_sizes is None:
         batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
-
-    # Optionally find and add maximum batch size
-    if find_max and device == "cuda":
-        print("\n" + "="*80)
-        print("FINDING MAXIMUM BATCH SIZE")
-        print("="*80)
-        print("This will take a few minutes...")
-        print("="*80 + "\n")
-
-        from find_max_batch_size import binary_search_max_batch_size, exponential_search_upper_bound
-
-        # Find upper bound
-        upper_bound = exponential_search_upper_bound(device, start=max(batch_sizes))
-
-        # Binary search for exact max
-        max_batch_size = binary_search_max_batch_size(device, lower=max(batch_sizes), upper=upper_bound)
-
-        # Add to list if not already there
-        if max_batch_size not in batch_sizes:
-            batch_sizes.append(max_batch_size)
-            batch_sizes.sort()
-
-        print(f"\n✅ Found maximum batch size: {max_batch_size}")
-        print(f"Updated batch sizes: {batch_sizes}\n")
     
     results = {}
     max_successful_batch_size = 0
@@ -209,11 +189,6 @@ def main():
         default=None,
         help="Specific batch sizes to test (e.g., --batch_sizes 32 64 128)"
     )
-    parser.add_argument(
-        "--find_max",
-        action="store_true",
-        help="Automatically find and include maximum batch size"
-    )
 
     args = parser.parse_args()
 
@@ -226,8 +201,7 @@ def main():
         use_wandb=not args.no_wandb,
         optimize_lr=args.optimize_lr,
         base_lr=args.base_lr,
-        batch_sizes=args.batch_sizes,
-        find_max=args.find_max
+        batch_sizes=args.batch_sizes
     )
 
 

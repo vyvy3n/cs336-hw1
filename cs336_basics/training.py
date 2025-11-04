@@ -15,7 +15,6 @@ from .models import TransformerLM
 from .optimizers import AdamW, CrossEntropyLoss, get_lr_cosine_schedule, gradient_clipping
 from .utils import (
     get_batch,
-    compute_loss,
     setup_device,
     get_checkpoint_paths,
     safe_wandb_call,
@@ -174,7 +173,7 @@ class Trainer:
                 )
 
                 logits = self.model(x)
-                loss = compute_loss(logits, y, self.loss_fn)
+                loss = self.loss_fn(logits.view(-1, logits.size(-1)), y.view(-1))
                 losses.append(loss.item())
 
         self.model.train()
@@ -215,7 +214,7 @@ class Trainer:
         logits = self.model(x)
 
         # Compute loss
-        loss = compute_loss(logits, y, self.loss_fn)
+        loss = self.loss_fn(logits.view(-1, logits.size(-1)), y.view(-1))
 
         # Backward pass
         self.optimizer.zero_grad()
@@ -370,62 +369,3 @@ class Trainer:
         # Finish W&B
         if self.use_wandb:
             safe_wandb_call('finish')
-
-
-
-# Backward compatibility: provide functional API that wraps Trainer class
-def train(config: TrainingConfig):
-    """
-    Main training loop (functional API).
-
-    This is a backward-compatible wrapper around the Trainer class.
-    For new code, consider using Trainer directly:
-        trainer = Trainer(config)
-        trainer.train()
-
-    Args:
-        config: Training configuration
-    """
-    trainer = Trainer(config)
-    trainer.train()
-
-
-# Additional backward-compatible functions for external use
-def estimate_loss(
-    model: nn.Module,
-    dataset: np.ndarray,
-    config: TrainingConfig,
-    loss_fn: CrossEntropyLoss,
-    num_batches: int = 20,
-) -> float:
-    """
-    Estimate loss on a dataset (backward-compatible functional API).
-
-    Args:
-        model: The model to evaluate
-        dataset: Dataset to evaluate on
-        config: Training configuration
-        loss_fn: Loss function to use
-        num_batches: Number of batches to average over
-
-    Returns:
-        Average loss over the batches
-    """
-    model.eval()
-    losses = []
-
-    with torch.no_grad():
-        for _ in range(num_batches):
-            x, y = get_batch(
-                dataset,
-                batch_size=config.data.batch_size,
-                context_length=config.data.context_length,
-                device=config.device,
-            )
-
-            logits = model(x)
-            loss = compute_loss(logits, y, loss_fn)
-            losses.append(loss.item())
-
-    model.train()
-    return np.mean(losses)

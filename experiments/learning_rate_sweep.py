@@ -17,10 +17,10 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from experiments.experiment_utils import create_base_config, print_experiment_header
 import torch
+from cs336_basics.config import TrainingConfig, ModelConfig, DataConfig, OptimizerConfig
 from cs336_basics.training import Trainer
-from cs336_basics.utils import setup_device
+from cs336_basics.utils import setup_device, print_experiment_header
 
 
 def run_single_experiment(learning_rate: float, run_name: str, device: str):
@@ -32,13 +32,18 @@ def run_single_experiment(learning_rate: float, run_name: str, device: str):
         run_name: Name for this run (for W&B and checkpoints)
         device: Device to use for training
     """
-    config = create_base_config(
-        learning_rate=learning_rate,
+    config = TrainingConfig(
+        model=ModelConfig(vocab_size=10000),
+        data=DataConfig(
+            train_data_path="data/tinystories_train_tokens.npy",
+            val_data_path="data/tinystories_valid_tokens.npy",
+        ),
+        optimizer=OptimizerConfig(learning_rate=learning_rate),
         checkpoint_dir=f"checkpoints/lr_sweep/{run_name}",
         wandb_project="cs336-lr-sweep",
+        wandb_run_name=run_name,
         device=device,
     )
-    config.wandb_run_name = run_name
 
     print_experiment_header(
         run_name,

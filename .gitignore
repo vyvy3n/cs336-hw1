@@ -163,24 +163,8 @@ cython_debug/
 *.zip
 
 # Custom ignores
-.specstory
-
-# ============================================================================
-# ML/AI Project Specific Ignores
-# ============================================================================
-
-# Large data files (20GB+)
+.specstory/
 data/
-!data/.gitkeep
-!data/README.md
-
-# Model checkpoints (35GB+)
-checkpoints/
-test_checkpoints/
-!checkpoints/.gitkeep
-!checkpoints/README.md
-
-# Experiment tracking (347MB+)
 wandb/
 artifacts/
-!artifacts/.gitkeep
+*checkpoints/
