@@ -25,7 +25,7 @@ import yaml
 from pathlib import Path
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.models import TransformerLM
-from cs336_basics.generation import generate
+from cs336_basics.decoder import generate
 
 
 def load_tokenizer_from_yaml(yaml_path: str) -> Tokenizer:

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import os
-from typing import BinaryIO, IO
+from typing import BinaryIO, IO, Optional
 
 
 ### Data utils for language modeling
@@ -86,14 +86,166 @@ def load_checkpoint(
     # Load checkpoint from disk
     # torch.load() automatically handles both file paths and file-like objects
     checkpoint = torch.load(src, weights_only=False)
-    
+
     # Restore model state
     # load_state_dict() updates the model parameters in-place
     model.load_state_dict(checkpoint['model'])
-    
+
     # Restore optimizer state
     # This includes momentum buffers, learning rate, etc.
     optimizer.load_state_dict(checkpoint['optimizer'])
-    
+
     # Return the iteration number so training can resume from the correct point
     return checkpoint['iteration']
+
+
+### Device and GPU utilities
+
+
+def setup_device(requested_device: str = "cuda", verbose: bool = True) -> str:
+    """
+    Check device availability and optionally print GPU info.
+
+    Args:
+        requested_device: Requested device ('cuda' or 'cpu')
+        verbose: Whether to print device information
+
+    Returns:
+        Valid device string ('cuda' or 'cpu')
+
+    Example:
+        >>> device = setup_device("cuda", verbose=True)
+        📊 GPU Information:
+          Device: NVIDIA A100
+          Memory: 40.00 GB
+    """
+    if requested_device == "cuda" and torch.cuda.is_available():
+        if verbose:
+            print(f"\n📊 GPU Information:")
+            print(f"  Device: {torch.cuda.get_device_name(0)}")
+            print(f"  Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB\n")
+        return "cuda"
+    else:
+        if verbose:
+            if requested_device == "cuda":
+                print("\n⚠️  CUDA not available, falling back to CPU\n")
+            else:
+                print("\n⚠️  Using CPU\n")
+        return "cpu"
+
+
+### Loss computation utilities
+
+
+def compute_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    loss_fn,
+) -> torch.Tensor:
+    """
+    Compute cross-entropy loss from logits and targets.
+
+    Flattens logits and targets before computing loss.
+
+    Args:
+        logits: Model output of shape (batch_size, seq_len, vocab_size)
+        targets: Target token IDs of shape (batch_size, seq_len)
+        loss_fn: Loss function (e.g., CrossEntropyLoss instance)
+
+    Returns:
+        Scalar loss tensor
+
+    Example:
+        >>> logits = model(x)  # shape: (32, 256, 10000)
+        >>> loss = compute_loss(logits, y, loss_fn)
+    """
+    logits_flat = logits.view(-1, logits.size(-1))
+    targets_flat = targets.view(-1)
+    return loss_fn(logits_flat, targets_flat)
+
+
+### Checkpoint path utilities
+
+
+def get_checkpoint_paths(checkpoint_dir: str, iteration: int) -> tuple[str, str]:
+    """
+    Generate checkpoint file paths.
+
+    Args:
+        checkpoint_dir: Directory to save checkpoints
+        iteration: Current iteration number
+
+    Returns:
+        Tuple of (numbered_checkpoint_path, latest_checkpoint_path)
+
+    Example:
+        >>> numbered, latest = get_checkpoint_paths("checkpoints", 1000)
+        >>> print(numbered)  # "checkpoints/checkpoint_iter_1000.pt"
+        >>> print(latest)    # "checkpoints/checkpoint_latest.pt"
+    """
+    numbered = os.path.join(checkpoint_dir, f"checkpoint_iter_{iteration}.pt")
+    latest = os.path.join(checkpoint_dir, "checkpoint_latest.pt")
+    return numbered, latest
+
+
+### Weights & Biases utilities
+
+
+def safe_wandb_call(func_name: str, *args, **kwargs):
+    """
+    Safely call a wandb function, handling import errors gracefully.
+
+    Args:
+        func_name: Function name as string (e.g., 'log', 'init', 'finish')
+        *args, **kwargs: Arguments to pass to the function
+
+    Returns:
+        Result of the function call, or None if wandb not available
+
+    Example:
+        >>> safe_wandb_call('log', {'loss': 0.5}, step=100)
+        >>> safe_wandb_call('finish')
+    """
+    try:
+        import wandb
+        wandb_func = getattr(wandb, func_name)
+        return wandb_func(*args, **kwargs)
+    except (ImportError, AttributeError):
+        return None
+
+
+### Model utilities
+
+
+def count_parameters(model: torch.nn.Module) -> int:
+    """
+    Count the number of trainable parameters in a model.
+
+    Args:
+        model: PyTorch model
+
+    Returns:
+        Number of trainable parameters
+
+    Example:
+        >>> model = TransformerLM(...)
+        >>> num_params = count_parameters(model)
+        >>> print(f"Model has {num_params:,} parameters")
+    """
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def set_seed(seed: int):
+    """
+    Set random seed for reproducibility.
+
+    Args:
+        seed: Random seed value
+
+    Example:
+        >>> set_seed(42)
+    """
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)

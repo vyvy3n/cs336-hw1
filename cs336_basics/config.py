@@ -21,7 +21,7 @@ class ModelConfig:
     use_rope: bool = True  # Whether to use Rotary Position Embeddings
     theta: float = 10000.0  # RoPE theta parameter
     ablation_type: str = "none"  # Ablation type: "none", "no_rmsnorm", "post_norm", "silu_only"
-    
+
     def __post_init__(self):
         """Validate configuration after initialization."""
         if self.d_model % self.num_heads != 0:
@@ -35,7 +35,7 @@ class ModelConfig:
 @dataclass
 class OptimizerConfig:
     """Configuration for the AdamW optimizer."""
-    
+
     learning_rate: float = 6e-4  # Initial/max learning rate
     weight_decay: float = 0.1  # Weight decay coefficient
     beta1: float = 0.9  # Adam beta1
@@ -47,16 +47,16 @@ class OptimizerConfig:
 @dataclass
 class SchedulerConfig:
     """Configuration for learning rate scheduling."""
-    
+
     warmup_iters: int = 100  # Number of warmup iterations
     max_iters: int = 5000  # Total number of training iterations
     min_lr_ratio: float = 0.1  # Minimum LR as ratio of max LR (min_lr = min_lr_ratio * max_lr)
-    
+
     @property
     def cosine_cycle_iters(self) -> int:
         """Total iterations for cosine annealing (same as max_iters)."""
         return self.max_iters
-    
+
     def get_min_lr(self, max_lr: float) -> float:
         """Compute minimum learning rate from max learning rate."""
         return max_lr * self.min_lr_ratio
@@ -83,53 +83,53 @@ class DataConfig:
 @dataclass
 class TrainingConfig:
     """Main configuration for the entire training run."""
-    
+
     # Sub-configurations
     model: ModelConfig = field(default_factory=ModelConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     data: DataConfig = field(default_factory=DataConfig)
-    
+
     # Training settings
     device: str = "cuda"  # Device to train on ('cuda' or 'cpu')
     seed: int = 42  # Random seed for reproducibility
-    
+
     # Checkpointing
     checkpoint_dir: str = "checkpoints"  # Directory to save checkpoints
     checkpoint_interval: int = 500  # Save checkpoint every N iterations
     resume_from: Optional[str] = None  # Path to checkpoint to resume from
-    
+
     # Logging
     log_interval: int = 10  # Log training metrics every N iterations
     eval_interval: int = 100  # Evaluate on validation set every N iterations
     eval_iters: int = 20  # Number of batches to use for validation
-    
+
     # Weights & Biases (optional)
     use_wandb: bool = False  # Whether to use Weights & Biases for logging
     wandb_project: str = "gpt2-training"  # W&B project name
     wandb_run_name: Optional[str] = None  # W&B run name (None = auto-generate)
-    
+
     def __post_init__(self):
         """Validate and setup configuration."""
         import os
-        
+
         # Ensure context lengths match
         if self.model.context_length != self.data.context_length:
             raise ValueError(
                 f"Model context_length ({self.model.context_length}) must match "
                 f"data context_length ({self.data.context_length})"
             )
-        
+
         # Create checkpoint directory if it doesn't exist
         os.makedirs(self.checkpoint_dir, exist_ok=True)
-        
+
         # Validate device
         if self.device == "cuda":
             import torch
             if not torch.cuda.is_available():
                 print("Warning: CUDA not available, falling back to CPU")
                 self.device = "cpu"
-    
+
     def to_dict(self) -> dict:
         """Convert configuration to dictionary for logging."""
         return {
@@ -171,3 +171,106 @@ class TrainingConfig:
                 "eval_iters": self.eval_iters,
             },
         }
+
+
+def create_tinystories_config(
+    batch_size: int = 32,
+    learning_rate: float = 1e-3,
+    max_iters: int = 40_000,
+    vocab_size: int = 10_000,
+    context_length: int = 256,
+    num_layers: int = 4,
+    d_model: int = 512,
+    num_heads: int = 16,
+    d_ff: int = 1344,
+    use_rope: bool = True,
+    theta: float = 10000.0,
+    warmup_ratio: float = 0.05,
+    eval_interval: int = 500,
+    eval_iters: int = 100,
+    log_interval: int = 100,
+    checkpoint_interval: int = 10_000,
+    checkpoint_dir: str = "checkpoints",
+    wandb_project: str = "cs336-experiments",
+    device: str = "cuda",
+) -> TrainingConfig:
+    """
+    Create a training configuration with TinyStories dataset defaults.
+
+    This is a factory function that provides sensible defaults for experiments
+    on the TinyStories dataset (vocab_size=10000, 4-layer model, etc.).
+
+    Args:
+        batch_size: Batch size for training
+        learning_rate: Peak learning rate
+        max_iters: Total number of training iterations
+        vocab_size: Vocabulary size (10000 for TinyStories)
+        context_length: Maximum sequence length
+        num_layers: Number of transformer layers
+        d_model: Model dimension
+        num_heads: Number of attention heads
+        d_ff: Feed-forward dimension
+        use_rope: Whether to use Rotary Position Embeddings
+        theta: RoPE theta parameter
+        warmup_ratio: Fraction of max_iters to use for warmup
+        eval_interval: Evaluate every N iterations
+        eval_iters: Number of batches to use for evaluation
+        log_interval: Log every N iterations
+        checkpoint_interval: Save checkpoint every N iterations
+        checkpoint_dir: Directory to save checkpoints
+        wandb_project: Weights & Biases project name
+        device: Device to use for training
+
+    Returns:
+        TrainingConfig object configured for TinyStories experiments
+    """
+    model_config = ModelConfig(
+        vocab_size=vocab_size,
+        context_length=context_length,
+        num_layers=num_layers,
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        use_rope=use_rope,
+        theta=theta,
+    )
+
+    optimizer_config = OptimizerConfig(
+        learning_rate=learning_rate,
+        weight_decay=0.1,
+        beta1=0.9,
+        beta2=0.95,
+        eps=1e-8,
+        grad_clip_norm=1.0,
+    )
+
+    warmup_iters = int(warmup_ratio * max_iters)
+    scheduler_config = SchedulerConfig(
+        warmup_iters=warmup_iters,
+        max_iters=max_iters,
+        min_lr_ratio=0.1,
+    )
+
+    data_config = DataConfig(
+        train_data_path="data/tinystories_train_tokens.npy",
+        val_data_path="data/tinystories_valid_tokens.npy",
+        batch_size=batch_size,
+        context_length=context_length,
+    )
+
+    config = TrainingConfig(
+        model=model_config,
+        optimizer=optimizer_config,
+        scheduler=scheduler_config,
+        data=data_config,
+        eval_interval=eval_interval,
+        eval_iters=eval_iters,
+        log_interval=log_interval,
+        checkpoint_interval=checkpoint_interval,
+        checkpoint_dir=checkpoint_dir,
+        use_wandb=True,
+        wandb_project=wandb_project,
+        device=device,
+    )
+
+    return config

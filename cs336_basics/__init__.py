@@ -7,7 +7,7 @@ except Exception:
 # Export main components
 from .models import TransformerLM, TransformerBlock, MultiheadSelfAttention
 from .tokenizer import Tokenizer
-from .generation import generate, generate_batch, sample_from_logits
+from .decoder import generate, generate_batch, sample_from_logits
 
 __all__ = [
     "TransformerLM",

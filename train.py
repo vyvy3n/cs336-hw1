@@ -31,11 +31,8 @@ from cs336_basics.config import (
     OptimizerConfig,
     SchedulerConfig,
     DataConfig,
-    get_small_model_config,
-    get_medium_model_config,
-    get_large_model_config,
 )
-from cs336_basics.training import train
+from cs336_basics.training import Trainer
 
 
 def parse_args():
@@ -45,14 +42,8 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     
-    # Preset configurations
-    parser.add_argument(
-        "--config",
-        type=str,
-        choices=["small", "medium", "large", "custom"],
-        default="custom",
-        help="Use a preset configuration (small/medium/large) or custom",
-    )
+    # Note: Preset configurations removed for simplicity
+    # All configuration is done via command-line arguments
     
     # Model architecture
     model_group = parser.add_argument_group("Model Architecture")
@@ -115,17 +106,9 @@ def parse_args():
 
 def create_config_from_args(args) -> TrainingConfig:
     """Create a TrainingConfig from command-line arguments."""
-    
-    # If using a preset, start with that
-    if args.config == "small":
-        config = get_small_model_config()
-    elif args.config == "medium":
-        config = get_medium_model_config()
-    elif args.config == "large":
-        config = get_large_model_config()
-    else:
-        # Custom configuration
-        config = TrainingConfig()
+
+    # Create custom configuration from arguments
+    config = TrainingConfig()
     
     # Override with command-line arguments (only if not using preset or explicitly set)
     # Model
@@ -252,7 +235,8 @@ def main():
     
     # Start training
     try:
-        train(config)
+        trainer = Trainer(config)
+        trainer.train()
     except KeyboardInterrupt:
         print("\n\nTraining interrupted by user")
         sys.exit(0)

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Simple tests for the generation module.
+Simple tests for the decoder module.
 
-This script tests the generation functions with a small dummy model.
+This script tests the decoding functions with a small dummy model.
 """
 
 import torch
 import torch.nn as nn
-from cs336_basics.generation import sample_from_logits, generate
+from cs336_basics.decoder import sample_from_logits, generate
 
 
 class DummyModel(nn.Module):
@@ -207,7 +207,7 @@ def test_batch_generation():
 def main():
     """Run all tests."""
     print("="*80)
-    print("Running Generation Module Tests")
+    print("Running Decoder Module Tests")
     print("="*80 + "\n")
     
     try:

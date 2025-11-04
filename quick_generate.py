@@ -12,7 +12,7 @@ import torch
 import json
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.models import TransformerLM
-from cs336_basics.generation import generate
+from cs336_basics.decoder import generate
 
 
 def main():
