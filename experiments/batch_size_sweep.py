@@ -18,68 +18,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
-from cs336_basics.config import TrainingConfig, ModelConfig, DataConfig, OptimizerConfig
-from cs336_basics.training import Trainer
-from cs336_basics.utils import setup_device, print_experiment_header, handle_oom_error
-
-
-def run_single_experiment(batch_size: int, learning_rate: float, run_name: str, device: str, use_wandb: bool):
-    """
-    Run a single training experiment with a specific batch size.
-
-    Args:
-        batch_size: Batch size to use
-        learning_rate: Learning rate to use
-        run_name: Name for this run (for W&B and checkpoints)
-        device: Device to use for training
-        use_wandb: Whether to use W&B logging
-    """
-    config = TrainingConfig(
-        model=ModelConfig(vocab_size=10000),
-        data=DataConfig(
-            train_data_path="data/tinystories_train_tokens.npy",
-            val_data_path="data/tinystories_valid_tokens.npy",
-            batch_size=batch_size,
-        ),
-        optimizer=OptimizerConfig(learning_rate=learning_rate),
-        checkpoint_dir=f"checkpoints/batch_size_sweep/{run_name}",
-        wandb_project="cs336-batch-size-sweep",
-        wandb_run_name=run_name,
-        use_wandb=use_wandb,
-        device=device,
-    )
-
-    total_tokens = batch_size * config.scheduler.max_iters * config.data.context_length
-    print_experiment_header(
-        run_name,
-        {
-            "Batch size": batch_size,
-            "Learning rate": learning_rate,
-            "Total steps": config.scheduler.max_iters,
-            "Total tokens": f"{total_tokens:,}",
-        }
-    )
-
-    try:
-        trainer = Trainer(config)
-        trainer.train()
-        print(f"\n✓ Completed: {run_name}\n")
-        return True
-    except RuntimeError as e:
-        if "out of memory" in str(e).lower():
-            return handle_oom_error(batch_size)
-        else:
-            print(f"\n✗ Failed: {run_name}")
-            print(f"Error: {e}\n")
-            return False
-    except Exception as e:
-        print(f"\n✗ Failed: {run_name}")
-        print(f"Error: {e}\n")
-        return False
+from cs336_basics.utils import setup_device
+from experiment_utils import run_single_experiment
 
 
 def batch_size_sweep(device: str, use_wandb: bool, optimize_lr: bool = False, base_lr: float = 3e-4,
-                     batch_sizes: list[int] = None):
+                     batch_sizes: list[int] = None, dataset: str = "tinystories"):
     """
     Perform a sweep over batch sizes.
 
@@ -89,15 +33,16 @@ def batch_size_sweep(device: str, use_wandb: bool, optimize_lr: bool = False, ba
         optimize_lr: Whether to scale learning rate with batch size
         base_lr: Base learning rate (for batch_size=32)
         batch_sizes: Specific batch sizes to test (if None, use default range)
+        dataset: Dataset to use ('tinystories' or 'owt')
     """
     # Test batch sizes from 1 to GPU memory limit
     # Include typical sizes: 1, 2, 4, 8, 16, 32, 64, 128, 256, 512
     if batch_sizes is None:
         batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
-    
+
     results = {}
     max_successful_batch_size = 0
-    
+
     print("\n" + "="*80)
     print("BATCH SIZE SWEEP")
     print("="*80)
@@ -105,7 +50,7 @@ def batch_size_sweep(device: str, use_wandb: bool, optimize_lr: bool = False, ba
     print(f"Base learning rate: {base_lr}")
     print(f"LR optimization: {'Enabled (sqrt scaling)' if optimize_lr else 'Disabled (fixed LR)'}")
     print("="*80 + "\n")
-    
+
     for batch_size in batch_sizes:
         # Optionally scale learning rate with batch size
         # Common heuristic: LR ∝ sqrt(batch_size)
@@ -115,22 +60,30 @@ def batch_size_sweep(device: str, use_wandb: bool, optimize_lr: bool = False, ba
             learning_rate = base_lr * lr_scale
         else:
             learning_rate = base_lr
-        
+
         run_name = f"bs_{batch_size}_lr_{learning_rate:.0e}".replace(".", "_").replace("-", "_")
-        
+
         success = run_single_experiment(
+            dataset=dataset,
             batch_size=batch_size,
             learning_rate=learning_rate,
             run_name=run_name,
             device=device,
-            use_wandb=use_wandb
+            use_wandb=use_wandb,
+            checkpoint_dir="checkpoints/batch_size_sweep",
+            wandb_project="cs336-batch-size-sweep",
+            experiment_params={
+                "Batch size": batch_size,
+                "Learning rate": learning_rate,
+            },
+            handle_oom=True,
         )
-        
+
         results[batch_size] = {
             'success': success,
             'learning_rate': learning_rate
         }
-        
+
         if success:
             max_successful_batch_size = batch_size
         else:
@@ -139,7 +92,7 @@ def batch_size_sweep(device: str, use_wandb: bool, optimize_lr: bool = False, ba
                 print(f"\n⚠ Reached memory limit at batch size {batch_size}")
                 print(f"Skipping larger batch sizes...\n")
                 break
-    
+
     # Print summary
     print("\n" + "="*80)
     print("Batch Size Sweep Results:")
@@ -150,11 +103,11 @@ def batch_size_sweep(device: str, use_wandb: bool, optimize_lr: bool = False, ba
         lr = result['learning_rate']
         status = "✓ Success" if result['success'] else "✗ Failed/OOM"
         print(f"{batch_size:<15} {lr:<15.2e} {status:<20}")
-    
+
     print("-" * 80)
     print(f"\n🎯 Maximum successful batch size: {max_successful_batch_size}")
     print("="*80 + "\n")
-    
+
     return results
 
 
@@ -165,6 +118,13 @@ def main():
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Device to use for training"
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        choices=["tinystories", "owt"],
+        default="tinystories",
+        help="Dataset to use for sweep"
     )
     parser.add_argument(
         "--no_wandb",
@@ -201,10 +161,10 @@ def main():
         use_wandb=not args.no_wandb,
         optimize_lr=args.optimize_lr,
         base_lr=args.base_lr,
-        batch_sizes=args.batch_sizes
+        batch_sizes=args.batch_sizes,
+        dataset=args.dataset
     )
 
 
 if __name__ == "__main__":
     main()
-

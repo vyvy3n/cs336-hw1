@@ -69,12 +69,16 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer,
     iteration: int,
     out: str | os.PathLike | BinaryIO | IO[bytes],
+    training_state: dict = None,
 ) -> None:
     checkpoint = {
         'model': model.state_dict(),
         'optimizer': optimizer.state_dict(),
         'iteration': iteration,
     }
+    # Save additional training state (e.g., early stopping state)
+    if training_state is not None:
+        checkpoint['training_state'] = training_state
     torch.save(checkpoint, out)
 
 
@@ -82,7 +86,7 @@ def load_checkpoint(
     src: str | os.PathLike | BinaryIO | IO[bytes],
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-) -> int:
+) -> tuple[int, dict]:
     # Load checkpoint from disk
     # torch.load() automatically handles both file paths and file-like objects
     checkpoint = torch.load(src, weights_only=False)
@@ -95,8 +99,11 @@ def load_checkpoint(
     # This includes momentum buffers, learning rate, etc.
     optimizer.load_state_dict(checkpoint['optimizer'])
 
-    # Return the iteration number so training can resume from the correct point
-    return checkpoint['iteration']
+    # Get training state if available (for early stopping, etc.)
+    training_state = checkpoint.get('training_state', {})
+
+    # Return the iteration number and training state
+    return checkpoint['iteration'], training_state
 
 
 def get_checkpoint_paths(checkpoint_dir: str, iteration: int) -> tuple[str, str]:

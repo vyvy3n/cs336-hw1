@@ -22,7 +22,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cs336_basics.config import TrainingConfig, ModelConfig, DataConfig, OptimizerConfig
+from cs336_basics.config import TrainingConfig
 from cs336_basics.training import Trainer
 from cs336_basics.utils import setup_device, print_experiment_header
 
@@ -37,20 +37,6 @@ def run_experiment(ablation: str, learning_rate: float, device: str, use_wandb: 
         device: Device to train on
         use_wandb: Whether to use W&B logging
     """
-    # Create base config
-    config = TrainingConfig(
-        model=ModelConfig(vocab_size=10000),
-        data=DataConfig(
-            train_data_path="data/tinystories_train_tokens.npy",
-            val_data_path="data/tinystories_valid_tokens.npy",
-        ),
-        optimizer=OptimizerConfig(learning_rate=learning_rate),
-        checkpoint_dir="checkpoints/ablations",
-        wandb_project="cs336-ablations",
-        use_wandb=use_wandb,
-        device=device,
-    )
-
     # Set ablation-specific configuration
     ablation_configs = {
         "layer_norm": {
@@ -79,13 +65,23 @@ def run_experiment(ablation: str, learning_rate: float, device: str, use_wandb: 
         raise ValueError(f"Unknown ablation type: {ablation}")
 
     ablation_cfg = ablation_configs[ablation]
-    config.wandb_run_name = ablation_cfg["run_name"]
-    config.checkpoint_dir = ablation_cfg["checkpoint_dir"]
 
+    # Create config using dataset factory, then override for ablation
+    config = TrainingConfig.from_dataset(
+        dataset="tinystories",
+        learning_rate=learning_rate,
+        device=device,
+        use_wandb=use_wandb,
+        wandb_project="cs336-ablations",
+        wandb_run_name=ablation_cfg["run_name"],
+        checkpoint_dir=ablation_cfg["checkpoint_dir"],
+    )
+
+    # Apply ablation-specific overrides
     if "ablation_type" in ablation_cfg:
-        config.model.ablation_type = ablation_cfg["ablation_type"]
+        config.ablation_type = ablation_cfg["ablation_type"]
     if "use_rope" in ablation_cfg:
-        config.model.use_rope = ablation_cfg["use_rope"]
+        config.use_rope = ablation_cfg["use_rope"]
 
     print_experiment_header(
         f"Ablation: {ablation}",

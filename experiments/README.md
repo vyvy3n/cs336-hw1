@@ -71,18 +71,23 @@ Train on OpenWebText and compare with TinyStories to understand dataset effects.
 #### Quick Test (100 iterations)
 
 ```bash
-# Test OWT training only
-uv run python experiments/train_owt.py --device cuda --max_iters 100
+# Test OWT training only (using main train.py script)
+uv run python train.py --device cuda --max_iters 100
 
-# Test both datasets
+# Test both datasets for comparison
 uv run python experiments/compare_datasets.py --device cuda --max_iters 100
 ```
 
 #### Full Training (5000 iterations, same as TinyStories)
 
 ```bash
-# Train on OWT only
-uv run python experiments/train_owt.py --device cuda --use_wandb
+# Train on OWT only (using main train.py script)
+uv run python train.py --device cuda --use_wandb
+
+# Train on TinyStories (using main train.py script)
+uv run python train.py --train_data data/tinystories_train_tokens.npy \
+                       --val_data data/tinystories_valid_tokens.npy \
+                       --vocab_size 10000 --device cuda --use_wandb
 
 # Compare both datasets (recommended)
 uv run python experiments/compare_datasets.py --device cuda --use_wandb
@@ -268,7 +273,7 @@ This usually means the learning rate is too high. Try a smaller learning rate in
 ```
 experiments/
 ├── README.md                    # This file
-├── train_owt.py                 # Train on OpenWebText
+├── experiment_utils.py          # Shared utilities for experiments
 ├── compare_datasets.py          # Compare TinyStories vs OpenWebText
 ├── learning_rate_sweep.py       # Learning rate sweep experiments
 ├── batch_size_sweep.py          # Batch size sweep experiments
@@ -290,6 +295,8 @@ data/
 ├── owt_train_tokens.npy          # OpenWebText training tokens
 ├── owt_valid_tokens.npy          # OpenWebText validation tokens
 └── tokenizer_v10000.json         # BPE tokenizer
+
+Note: For single-dataset training, use the main train.py script in the root directory.
 ```
 
 ## Tips

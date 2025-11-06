@@ -6,7 +6,7 @@ This script trains models on both TinyStories and OpenWebText with identical
 configurations, allowing for direct comparison of learning curves and losses.
 
 The assignment asks:
-- Train your language model on OpenWebText with the same model architecture and 
+- Train your language model on OpenWebText with the same model architecture and
   total training iterations as TinyStories
 - Deliverable: A learning curve of your language model on OpenWebText
 - Describe the difference in losses from TinyStories - how should we interpret these losses?
@@ -30,7 +30,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cs336_basics.config import TrainingConfig, ModelConfig, DataConfig, OptimizerConfig, SchedulerConfig
+from cs336_basics.config import TrainingConfig
 from cs336_basics.training import Trainer
 from cs336_basics.utils import setup_device, print_experiment_header
 
@@ -38,8 +38,8 @@ from cs336_basics.utils import setup_device, print_experiment_header
 def train_on_dataset(
     dataset_name: str,
     device: str = "cuda",
-    max_iters: int = 5000,
-    eval_interval: int = 100,
+    max_iters: int = 40000,
+    eval_interval: int = 500,
     use_wandb: bool = False,
     learning_rate: float = 1e-3,
     batch_size: int = 32,
@@ -56,62 +56,16 @@ def train_on_dataset(
         learning_rate: Learning rate
         batch_size: Batch size
     """
-    # Set dataset-specific paths
-    if dataset_name == "tinystories":
-        train_path = "data/tinystories_train_tokens.npy"
-        val_path = "data/tinystories_valid_tokens.npy"
-        checkpoint_dir = "checkpoints/tinystories"
-        wandb_project = "cs336-dataset-comparison"
-        run_name = f"tinystories_lr{learning_rate:.0e}_bs{batch_size}"
-    elif dataset_name == "owt":
-        train_path = "data/owt_train_tokens.npy"
-        val_path = "data/owt_valid_tokens.npy"
-        checkpoint_dir = "checkpoints/owt"
-        wandb_project = "cs336-dataset-comparison"
-        run_name = f"owt_lr{learning_rate:.0e}_bs{batch_size}"
-    else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
-
-    # Create configuration (identical for both datasets)
-    config = TrainingConfig(
-        model=ModelConfig(
-            vocab_size=10000,
-            context_length=256,
-            num_layers=4,
-            d_model=512,
-            num_heads=16,
-            d_ff=1344,  # 512 * 2.625 for SwiGLU
-            use_rope=True,
-            theta=10000,
-        ),
-        data=DataConfig(
-            train_data_path=train_path,
-            val_data_path=val_path,
-            batch_size=batch_size,
-            context_length=256,
-        ),
-        optimizer=OptimizerConfig(
-            learning_rate=learning_rate,
-            beta1=0.9,
-            beta2=0.95,
-            eps=1e-8,
-            grad_clip_norm=1.0,
-        ),
-        scheduler=SchedulerConfig(
-            warmup_iters=100,
-            max_iters=max_iters,
-            min_lr_ratio=0.1,
-        ),
-        device=device,
-        seed=42,
-        checkpoint_dir=checkpoint_dir,
-        checkpoint_interval=1000,
-        log_interval=10,
+    # Create configuration using the dataset factory method
+    config = TrainingConfig.from_dataset(
+        dataset=dataset_name,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        max_iters=max_iters,
         eval_interval=eval_interval,
-        eval_iters=100,
+        device=device,
         use_wandb=use_wandb,
-        wandb_project=wandb_project,
-        wandb_run_name=run_name,
+        wandb_project="cs336-dataset-comparison",
     )
 
     print_experiment_header(
@@ -119,12 +73,12 @@ def train_on_dataset(
         {
             "Dataset": dataset_name.upper(),
             "Model": "TransformerLM",
-            "Vocab Size": config.model.vocab_size,
-            "Context Length": config.model.context_length,
-            "Layers": config.model.num_layers,
-            "d_model": config.model.d_model,
-            "Heads": config.model.num_heads,
-            "d_ff": config.model.d_ff,
+            "Vocab Size": config.vocab_size,
+            "Context Length": config.context_length,
+            "Layers": config.num_layers,
+            "d_model": config.d_model,
+            "Heads": config.num_heads,
+            "d_ff": config.d_ff,
             "Learning Rate": learning_rate,
             "Batch Size": batch_size,
             "Max Iterations": max_iters,
@@ -166,14 +120,14 @@ def main():
     parser.add_argument(
         "--max_iters",
         type=int,
-        default=5000,
-        help="Total training iterations per dataset (default: 5000)"
+        default=40000,
+        help="Total training iterations per dataset (default: 40000)"
     )
     parser.add_argument(
         "--eval_interval",
         type=int,
-        default=100,
-        help="Evaluation frequency (default: 100)"
+        default=500,
+        help="Evaluation frequency (default: 500)"
     )
     parser.add_argument(
         "--learning_rate",

@@ -238,6 +238,32 @@ You can compare learning curves side-by-side in the W&B dashboard.
 
 ## 🐛 Troubleshooting
 
+### ✅ FIXED: CUDA "index out of bounds" error
+
+**Symptom:**
+```
+RuntimeError: CUDA error: device-side assert triggered
+Assertion `-sizes[i] <= index && index < sizes[i] && "index out of bounds"` failed
+```
+
+**Cause:** OpenWebText uses vocab_size=32000, but the model was initially configured with vocab_size=10000 (TinyStories vocab size).
+
+**Solution:** ✅ **FIXED!** The scripts now automatically detect and use the correct vocab size:
+- TinyStories: vocab_size=10000 (tokens 0-9999)
+- OpenWebText: vocab_size=32000 (tokens 0-31999)
+
+**Verification:**
+```bash
+# Check vocab ranges in data
+python -c "
+import numpy as np
+ts = np.load('data/tinystories_train_tokens.npy', mmap_mode='r')
+owt = np.load('data/owt_train_tokens.npy', mmap_mode='r')
+print(f'TinyStories: min={ts.min()}, max={ts.max()}')
+print(f'OpenWebText: min={owt[:1000000].min()}, max={owt[:1000000].max()}')
+"
+```
+
 ### Data files not found
 
 ```bash

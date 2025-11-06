@@ -68,10 +68,10 @@ class Trainer:
         # Initialize optimizer
         self.optimizer = AdamW(
             self.model.parameters(),
-            lr=config.optimizer.learning_rate,
-            betas=(config.optimizer.beta1, config.optimizer.beta2),
-            eps=config.optimizer.eps,
-            weight_decay=config.optimizer.weight_decay,
+            lr=config.learning_rate,
+            betas=(config.beta1, config.beta2),
+            eps=config.eps,
+            weight_decay=config.weight_decay,
         )
 
         # Initialize loss function
@@ -84,14 +84,19 @@ class Trainer:
         self.current_iter = 0
         self.train_metrics = {}
 
+        # Early stopping state
+        self.best_val_loss = float('inf')
+        self.patience_counter = 0
+        self.early_stopped = False
+
     def _load_datasets(self):
         """Load training and validation datasets with memory mapping."""
-        print(f"Loading training data from {self.config.data.train_data_path}")
-        self.train_data = np.load(self.config.data.train_data_path, mmap_mode='r')
+        print(f"Loading training data from {self.config.train_data_path}")
+        self.train_data = np.load(self.config.train_data_path, mmap_mode='r')
         print(f"Training data shape: {self.train_data.shape}")
 
-        print(f"Loading validation data from {self.config.data.val_data_path}")
-        self.val_data = np.load(self.config.data.val_data_path, mmap_mode='r')
+        print(f"Loading validation data from {self.config.val_data_path}")
+        self.val_data = np.load(self.config.val_data_path, mmap_mode='r')
         print(f"Validation data shape: {self.val_data.shape}")
 
     def _create_model(self) -> nn.Module:
@@ -99,31 +104,31 @@ class Trainer:
         print("Initializing model...")
 
         # Use ablation model if specified
-        if hasattr(self.config.model, 'ablation_type') and self.config.model.ablation_type != "none":
+        if self.config.ablation_type != "none":
             from .ablation_models import TransformerLMAblation
-            print(f"Using ablation model: {self.config.model.ablation_type}")
+            print(f"Using ablation model: {self.config.ablation_type}")
             model = TransformerLMAblation(
-                vocab_size=self.config.model.vocab_size,
-                context_length=self.config.model.context_length,
-                num_layers=self.config.model.num_layers,
-                d_model=self.config.model.d_model,
-                num_heads=self.config.model.num_heads,
-                d_ff=self.config.model.d_ff,
-                use_rope=self.config.model.use_rope,
-                ablation_type=self.config.model.ablation_type,
-                theta=self.config.model.theta,
+                vocab_size=self.config.vocab_size,
+                context_length=self.config.context_length,
+                num_layers=self.config.num_layers,
+                d_model=self.config.d_model,
+                num_heads=self.config.num_heads,
+                d_ff=self.config.d_ff,
+                use_rope=self.config.use_rope,
+                ablation_type=self.config.ablation_type,
+                theta=self.config.theta,
                 device=self.device,
             ).to(self.device)
         else:
             model = TransformerLM(
-                vocab_size=self.config.model.vocab_size,
-                context_length=self.config.model.context_length,
-                num_layers=self.config.model.num_layers,
-                d_model=self.config.model.d_model,
-                num_heads=self.config.model.num_heads,
-                d_ff=self.config.model.d_ff,
-                use_rope=self.config.model.use_rope,
-                theta=self.config.model.theta,
+                vocab_size=self.config.vocab_size,
+                context_length=self.config.context_length,
+                num_layers=self.config.num_layers,
+                d_model=self.config.d_model,
+                num_heads=self.config.num_heads,
+                d_ff=self.config.d_ff,
+                use_rope=self.config.use_rope,
+                theta=self.config.theta,
                 device=self.device,
             ).to(self.device)
 
@@ -192,10 +197,10 @@ class Trainer:
         # Get learning rate for this iteration
         lr = get_lr_cosine_schedule(
             it=self.current_iter,
-            max_learning_rate=self.config.optimizer.learning_rate,
-            min_learning_rate=self.config.scheduler.get_min_lr(self.config.optimizer.learning_rate),
-            warmup_iters=self.config.scheduler.warmup_iters,
-            cosine_cycle_iters=self.config.scheduler.cosine_cycle_iters,
+            max_learning_rate=self.config.learning_rate,
+            min_learning_rate=self.config.get_min_lr(),
+            warmup_iters=self.config.warmup_iters,
+            cosine_cycle_iters=self.config.cosine_cycle_iters,
         )
 
         # Update learning rate in optimizer
@@ -205,8 +210,8 @@ class Trainer:
         # Sample a batch
         x, y = get_batch(
             self.train_data,
-            batch_size=self.config.data.batch_size,
-            context_length=self.config.data.context_length,
+            batch_size=self.config.batch_size,
+            context_length=self.config.context_length,
             device=self.device,
         )
 
@@ -221,7 +226,7 @@ class Trainer:
         loss.backward()
 
         # Gradient clipping
-        gradient_clipping(self.model.parameters(), max_l2_norm=self.config.optimizer.grad_clip_norm)
+        gradient_clipping(self.model.parameters(), max_l2_norm=self.config.grad_clip_norm)
 
         # Optimizer step
         self.optimizer.step()
@@ -269,12 +274,18 @@ class Trainer:
             self.current_iter
         )
 
+        # Prepare training state (for early stopping, etc.)
+        training_state = {
+            'best_val_loss': self.best_val_loss,
+            'patience_counter': self.patience_counter,
+        }
+
         # Save numbered checkpoint
         print(f"Saving checkpoint to {numbered_path}")
-        save_checkpoint_impl(self.model, self.optimizer, self.current_iter, numbered_path)
+        save_checkpoint_impl(self.model, self.optimizer, self.current_iter, numbered_path, training_state)
 
         # Save latest checkpoint
-        save_checkpoint_impl(self.model, self.optimizer, self.current_iter, latest_path)
+        save_checkpoint_impl(self.model, self.optimizer, self.current_iter, latest_path, training_state)
 
         # Save metrics if provided
         if metrics is not None:
@@ -295,8 +306,17 @@ class Trainer:
             checkpoint_path: Path to the checkpoint file
         """
         print(f"Loading checkpoint from {checkpoint_path}")
-        self.current_iter = load_checkpoint_impl(checkpoint_path, self.model, self.optimizer)
-        print(f"Resumed from iteration {self.current_iter}")
+        self.current_iter, training_state = load_checkpoint_impl(checkpoint_path, self.model, self.optimizer)
+
+        # Restore early stopping state if available
+        if training_state:
+            self.best_val_loss = training_state.get('best_val_loss', float('inf'))
+            self.patience_counter = training_state.get('patience_counter', 0)
+            print(f"Resumed from iteration {self.current_iter}")
+            print(f"  Best val loss: {self.best_val_loss:.4f}")
+            print(f"  Patience counter: {self.patience_counter}")
+        else:
+            print(f"Resumed from iteration {self.current_iter} (no training state found)")
 
 
     def train(self):
@@ -316,7 +336,7 @@ class Trainer:
         start_iter = self.current_iter
 
         # Print training info
-        print(f"\nStarting training from iteration {start_iter} to {self.config.scheduler.max_iters}")
+        print(f"\nStarting training from iteration {start_iter} to {self.config.max_iters}")
         print(f"Logging every {self.config.log_interval} iterations")
         print(f"Evaluating every {self.config.eval_interval} iterations")
         print(f"Checkpointing every {self.config.checkpoint_interval} iterations")
@@ -324,9 +344,9 @@ class Trainer:
 
         # Training loop
         for iteration in tqdm(
-            range(start_iter, self.config.scheduler.max_iters),
+            range(start_iter, self.config.max_iters),
             initial=start_iter,
-            total=self.config.scheduler.max_iters
+            total=self.config.max_iters
         ):
             self.current_iter = iteration
 
@@ -347,12 +367,30 @@ class Trainer:
                 }
                 self.log_metrics(eval_metrics)
 
+                # Early stopping check
+                if self.config.early_stopping_patience is not None:
+                    if val_loss < self.best_val_loss - self.config.early_stopping_min_delta:
+                        # Improvement detected
+                        self.best_val_loss = val_loss
+                        self.patience_counter = 0
+                    else:
+                        # No improvement
+                        self.patience_counter += 1
+                        if self.patience_counter >= self.config.early_stopping_patience:
+                            print(f"\n🛑 Early stopping triggered at iteration {iteration}")
+                            print(f"   Best val loss: {self.best_val_loss:.4f}")
+                            print(f"   No improvement for {self.config.early_stopping_patience} evaluations")
+                            self.early_stopped = True
+                            break
+
             # Checkpointing
             if iteration % self.config.checkpoint_interval == 0 and iteration > 0:
                 self.save_checkpoint(metrics=self.train_metrics)
 
         # Final evaluation and checkpoint
-        self.current_iter = self.config.scheduler.max_iters
+        if not self.early_stopped:
+            self.current_iter = self.config.max_iters
+
         print(f"\nPerforming final evaluation at iteration {self.current_iter}...")
         val_loss = self.estimate_loss(self.val_data, num_batches=self.config.eval_iters)
         final_metrics = {
@@ -363,7 +401,12 @@ class Trainer:
         self.log_metrics(final_metrics)
 
         # Save final checkpoint
-        print("\nTraining complete! Saving final checkpoint...")
+        if self.early_stopped:
+            print(f"\n✅ Training stopped early at iteration {self.current_iter}")
+            print(f"   Best validation loss: {self.best_val_loss:.4f}")
+        else:
+            print("\n✅ Training complete!")
+        print("Saving final checkpoint...")
         self.save_checkpoint(metrics=final_metrics)
 
         # Finish W&B
