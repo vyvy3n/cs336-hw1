@@ -48,3 +48,25 @@ gunzip owt_valid.txt.gz
 cd ..
 ```
 
+## Usage
+
+```bash
+# Train on TinyStories
+uv run train.py --dataset tinystories --device cuda
+
+# Train on OpenWebText
+uv run train.py --dataset owt --device cuda
+
+# Generate text
+uv run generate_text.py --checkpoint checkpoints/tinystories/checkpoint_latest.pt \
+    --vocab artifacts/tinystories_vocab.json \
+    --merges artifacts/tinystories_merges.txt
+
+# Run experiments
+uv run experiments/learning_rate_sweep.py --device cuda
+uv run experiments/batch_size_sweep.py --device cuda
+uv run experiments/ablations.py --ablation no_rmsnorm --device cuda
+
+# Find max batch size (useful before batch size sweep)
+uv run scripts/find_max_batch_size.py --device cuda
+```
