@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Ablation studies: no_rmsnorm, post_norm, no_rope, silu_only."""
 
 import argparse
@@ -8,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cs336_basics.config import TrainingConfig
-from experiment_utils import run_experiment
+from cs336_basics.utils import run_experiment
 
 
 ABLATIONS = {
@@ -52,4 +51,3 @@ if __name__ == "__main__":
             run_ablation(abl, args.lr, args.device)
     else:
         run_ablation(args.ablation, args.lr, args.device)
-

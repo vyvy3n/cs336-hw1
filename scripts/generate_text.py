@@ -10,7 +10,8 @@ import argparse
 import torch
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.models import TransformerLM
-from cs336_basics.decoder import generate
+from cs336_basics.generation import generate
+from scripts.encode_dataset import load_tokenizer_yaml
 
 
 def main():
@@ -22,16 +23,22 @@ def main():
         help="Path to model checkpoint (.pt file)",
     )
     parser.add_argument(
+        "--tokenizer",
+        type=str,
+        default=None,
+        help="Path to tokenizer YAML file (e.g., artifacts/owt_bpe.yaml)",
+    )
+    parser.add_argument(
         "--vocab",
         type=str,
-        required=True,
-        help="Path to vocabulary file (e.g., artifacts/tinystories_bpe.yaml)",
+        default=None,
+        help="Path to vocabulary JSON file (e.g., artifacts/tinystories_vocab.json)",
     )
     parser.add_argument(
         "--merges",
         type=str,
-        required=True,
-        help="Path to merges file (e.g., artifacts/tinystories_bpe_merges.txt)",
+        default=None,
+        help="Path to merges TXT file (e.g., artifacts/tinystories_merges.txt)",
     )
     parser.add_argument(
         "--prompt",
@@ -84,12 +91,21 @@ def main():
             torch.cuda.manual_seed(args.seed)
     
     # Load tokenizer
-    print(f"Loading tokenizer from {args.vocab} and {args.merges}...")
-    tokenizer = Tokenizer.from_files(
-        vocab_filepath=args.vocab,
-        merges_filepath=args.merges,
-        special_tokens=["<|endoftext|>"],
-    )
+    if args.tokenizer:
+        # Load from YAML file
+        print(f"Loading tokenizer from {args.tokenizer}...")
+        vocab, merges = load_tokenizer_yaml(args.tokenizer)
+        tokenizer = Tokenizer(vocab, merges, special_tokens=["<|endoftext|>"])
+    elif args.vocab and args.merges:
+        # Load from JSON vocab + TXT merges
+        print(f"Loading tokenizer from {args.vocab} and {args.merges}...")
+        tokenizer = Tokenizer.from_files(
+            vocab_filepath=args.vocab,
+            merges_filepath=args.merges,
+            special_tokens=["<|endoftext|>"],
+        )
+    else:
+        raise ValueError("Must provide either --tokenizer (YAML) or both --vocab and --merges (JSON/TXT)")
     
     # Get the end-of-text token ID
     eos_token_id = tokenizer.bytes_to_id[b"<|endoftext|>"]
@@ -97,7 +113,7 @@ def main():
     
     # Load model checkpoint
     print(f"Loading model from {args.checkpoint}...")
-    checkpoint = torch.load(args.checkpoint, map_location=args.device)
+    checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
 
     # Extract model configuration from checkpoint
     # Handle different checkpoint formats

@@ -196,7 +196,7 @@ def ts_state_dict(request):
     from .common import FIXTURES_PATH
     import json
 
-    state_dict = torch.load(FIXTURES_PATH / "ts_tests" / "model.pt", map_location="cpu")
+    state_dict = torch.load(FIXTURES_PATH / "ts_tests" / "model.pt", map_location="cpu", weights_only=False)
     config = json.load(open(FIXTURES_PATH / "ts_tests" / "model_config.json"))
     state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
     return state_dict, config

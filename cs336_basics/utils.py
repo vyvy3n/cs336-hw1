@@ -228,49 +228,37 @@ def set_seed(seed: int):
 ### Experiment utilities
 
 
-def print_experiment_header(title: str, params: dict):
+def run_experiment(config, handle_oom: bool = False) -> bool:
     """
-    Print a formatted experiment header.
+    Run a training experiment. Returns True if successful.
 
     Args:
-        title: Experiment title
-        params: Dictionary of parameters to display
-
-    Example:
-        >>> print_experiment_header("Batch Size Sweep", {"batch_size": 32, "lr": 1e-3})
-        ================================================================================
-        Batch Size Sweep
-        ================================================================================
-        batch_size: 32
-        lr: 0.001
-        ================================================================================
-    """
-    print(f"\n{'='*80}")
-    print(f"{title}")
-    print(f"{'='*80}")
-    for key, value in params.items():
-        print(f"{key}: {value}")
-    print(f"{'='*80}\n")
-
-
-def handle_oom_error(batch_size: int) -> bool:
-    """
-    Handle out-of-memory errors during training.
-
-    Args:
-        batch_size: The batch size that caused OOM
+        config: TrainingConfig instance
+        handle_oom: If True, catch OOM errors and return False instead of raising
 
     Returns:
-        False (indicating failure)
+        True if training completed successfully, False if OOM occurred (when handle_oom=True)
 
     Example:
-        >>> if not handle_oom_error(512):
-        ...     print("Need to reduce batch size")
-        ✗ Out of Memory
-        Batch size 512 is too large for available GPU memory
+        >>> from cs336_basics.config import TrainingConfig
+        >>> config = TrainingConfig.from_dataset("tinystories", learning_rate=3e-4)
+        >>> success = run_experiment(config, handle_oom=True)
+        >>> if not success:
+        ...     print("OOM occurred, try smaller batch size")
     """
-    print(f"\n✗ Out of Memory")
-    print(f"Batch size {batch_size} is too large for available GPU memory\n")
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    return False
+    from .training import Trainer
+
+    try:
+        trainer = Trainer(config)
+        trainer.train()
+        print(f"\n✓ Completed\n")
+        return True
+    except RuntimeError as e:
+        if handle_oom and "out of memory" in str(e).lower():
+            print(f"\n⚠ OOM at batch_size={config.batch_size}\n")
+            return False
+        print(f"\n✗ Failed: {e}\n")
+        return False
+    except Exception as e:
+        print(f"\n✗ Failed: {e}\n")
+        return False

@@ -172,8 +172,8 @@ class Trainer:
             for _ in range(num_batches):
                 x, y = get_batch(
                     dataset,
-                    batch_size=self.config.data.batch_size,
-                    context_length=self.config.data.context_length,
+                    batch_size=self.config.batch_size,
+                    context_length=self.config.context_length,
                     device=self.device,
                 )
 

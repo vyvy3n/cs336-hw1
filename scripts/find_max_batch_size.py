@@ -77,7 +77,6 @@ def test_batch_size(batch_size: int, device: str, num_steps: int = 10) -> bool:
         
     except RuntimeError as e:
         if "out of memory" in str(e).lower():
-            torch.cuda.empty_cache()
             return False
         raise
 
@@ -122,4 +121,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     binary_search_max_batch_size(args.device, args.lower, args.upper, args.num_steps)
-

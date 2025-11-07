@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Learning Rate Sweep - find optimal LR and edge of stability."""
 
 import argparse
@@ -8,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cs336_basics.config import TrainingConfig
-from experiment_utils import run_experiment
+from cs336_basics.utils import run_experiment
 
 
 def grid_sweep(device: str, learning_rates: list[float], dataset: str = "tinystories"):

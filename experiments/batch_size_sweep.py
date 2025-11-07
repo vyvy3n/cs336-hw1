@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Batch Size Sweep - test different batch sizes up to memory limit."""
 
 import argparse
@@ -8,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cs336_basics.config import TrainingConfig
-from experiment_utils import run_experiment
+from cs336_basics.utils import run_experiment
 
 
 def batch_size_sweep(device: str, batch_sizes: list[int], dataset: str = "tinystories", base_lr: float = 3e-4):

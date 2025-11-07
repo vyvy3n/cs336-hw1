@@ -1,8 +1,8 @@
 """
-Text generation and decoding utilities for transformer language models.
+Text generation utilities for transformer language models.
 
-This module provides functions for generating text from trained language models,
-including support for:
+This module provides functions for autoregressive text generation from trained
+language models, including support for:
 - Temperature scaling
 - Top-p (nucleus) sampling
 - Configurable maximum generation length

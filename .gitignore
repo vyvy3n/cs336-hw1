@@ -168,3 +168,5 @@ data/
 wandb/
 artifacts/
 *checkpoints/
+*.md
+!README.md
