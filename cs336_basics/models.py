@@ -3,7 +3,7 @@ import math
 import torch
 import torch.nn as nn
 
-from .layers import Softmax, RotaryPositionalEmbedding, Linear, SwiGLU, RMSNorm
+from .layers import Softmax, RotaryPositionalEmbedding, Linear, SwiGLU, RMSNorm, Embedding
 from einops import einsum, rearrange
 
 
@@ -188,7 +188,7 @@ class TransformerLM(nn.Module):
         self.num_layers = num_layers
 
         # Token embedding layer
-        self.token_embeddings = nn.Embedding(vocab_size, d_model, device=device, dtype=dtype)
+        self.token_embeddings = Embedding(vocab_size, d_model, device=device, dtype=dtype)
         
         # Transformer blocks
         self.transformer_blocks = nn.ModuleList([

@@ -163,6 +163,10 @@ cython_debug/
 *.zip
 
 # Custom ignores
-.specstory
-./data
-./artifacts
+.specstory/
+data/
+wandb/
+artifacts/
+*checkpoints/
+*.md
+!README.md

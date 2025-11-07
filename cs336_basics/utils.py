@@ -69,12 +69,16 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer,
     iteration: int,
     out: str | os.PathLike | BinaryIO | IO[bytes],
+    training_state: dict = None,
 ) -> None:
     checkpoint = {
         'model': model.state_dict(),
         'optimizer': optimizer.state_dict(),
         'iteration': iteration,
     }
+    # Save additional training state (e.g., early stopping state)
+    if training_state is not None:
+        checkpoint['training_state'] = training_state
     torch.save(checkpoint, out)
 
 
@@ -82,18 +86,179 @@ def load_checkpoint(
     src: str | os.PathLike | BinaryIO | IO[bytes],
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-) -> int:
+) -> tuple[int, dict]:
     # Load checkpoint from disk
     # torch.load() automatically handles both file paths and file-like objects
     checkpoint = torch.load(src, weights_only=False)
-    
+
     # Restore model state
     # load_state_dict() updates the model parameters in-place
     model.load_state_dict(checkpoint['model'])
-    
+
     # Restore optimizer state
     # This includes momentum buffers, learning rate, etc.
     optimizer.load_state_dict(checkpoint['optimizer'])
-    
-    # Return the iteration number so training can resume from the correct point
-    return checkpoint['iteration']
+
+    # Get training state if available (for early stopping, etc.)
+    training_state = checkpoint.get('training_state', {})
+
+    # Return the iteration number and training state
+    return checkpoint['iteration'], training_state
+
+
+def get_checkpoint_paths(checkpoint_dir: str, iteration: int) -> tuple[str, str]:
+    """
+    Generate checkpoint file paths.
+
+    Args:
+        checkpoint_dir: Directory to save checkpoints
+        iteration: Current iteration number
+
+    Returns:
+        Tuple of (numbered_checkpoint_path, latest_checkpoint_path)
+
+    Example:
+        >>> numbered, latest = get_checkpoint_paths("checkpoints", 1000)
+        >>> print(numbered)  # "checkpoints/checkpoint_iter_1000.pt"
+        >>> print(latest)    # "checkpoints/checkpoint_latest.pt"
+    """
+    numbered = os.path.join(checkpoint_dir, f"checkpoint_iter_{iteration}.pt")
+    latest = os.path.join(checkpoint_dir, "checkpoint_latest.pt")
+    return numbered, latest
+
+
+### Device and GPU utilities
+
+
+def setup_device(requested_device: str = "cuda", verbose: bool = True) -> str:
+    """
+    Check device availability and optionally print GPU info.
+
+    Args:
+        requested_device: Requested device ('cuda' or 'cpu')
+        verbose: Whether to print device information
+
+    Returns:
+        Valid device string ('cuda' or 'cpu')
+
+    Example:
+        >>> device = setup_device("cuda", verbose=True)
+        📊 GPU Information:
+          Device: NVIDIA A100
+          Memory: 40.00 GB
+    """
+    if requested_device == "cuda" and torch.cuda.is_available():
+        if verbose:
+            print(f"\n📊 GPU Information:")
+            print(f"  Device: {torch.cuda.get_device_name(0)}")
+            print(f"  Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB\n")
+        return "cuda"
+    else:
+        if verbose:
+            if requested_device == "cuda":
+                print("\n⚠️  CUDA not available, falling back to CPU\n")
+            else:
+                print("\n⚠️  Using CPU\n")
+        return "cpu"
+
+
+### Weights & Biases utilities
+
+
+def safe_wandb_call(func_name: str, *args, **kwargs):
+    """
+    Safely call a wandb function, handling import errors gracefully.
+
+    Args:
+        func_name: Function name as string (e.g., 'log', 'init', 'finish')
+        *args, **kwargs: Arguments to pass to the function
+
+    Returns:
+        Result of the function call, or None if wandb not available
+
+    Example:
+        >>> safe_wandb_call('log', {'loss': 0.5}, step=100)
+        >>> safe_wandb_call('finish')
+    """
+    try:
+        import wandb
+        wandb_func = getattr(wandb, func_name)
+        return wandb_func(*args, **kwargs)
+    except (ImportError, AttributeError):
+        return None
+
+
+### Model utilities
+
+
+def count_parameters(model: torch.nn.Module) -> int:
+    """
+    Count the number of trainable parameters in a model.
+
+    Args:
+        model: PyTorch model
+
+    Returns:
+        Number of trainable parameters
+
+    Example:
+        >>> model = TransformerLM(...)
+        >>> num_params = count_parameters(model)
+        >>> print(f"Model has {num_params:,} parameters")
+    """
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def set_seed(seed: int):
+    """
+    Set random seed for reproducibility.
+
+    Args:
+        seed: Random seed value
+
+    Example:
+        >>> set_seed(42)
+    """
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+### Experiment utilities
+
+
+def run_experiment(config, handle_oom: bool = False) -> bool:
+    """
+    Run a training experiment. Returns True if successful.
+
+    Args:
+        config: TrainingConfig instance
+        handle_oom: If True, catch OOM errors and return False instead of raising
+
+    Returns:
+        True if training completed successfully, False if OOM occurred (when handle_oom=True)
+
+    Example:
+        >>> from cs336_basics.config import TrainingConfig
+        >>> config = TrainingConfig.from_dataset("tinystories", learning_rate=3e-4)
+        >>> success = run_experiment(config, handle_oom=True)
+        >>> if not success:
+        ...     print("OOM occurred, try smaller batch size")
+    """
+    from .training import Trainer
+
+    try:
+        trainer = Trainer(config)
+        trainer.train()
+        print(f"\n✓ Completed\n")
+        return True
+    except RuntimeError as e:
+        if handle_oom and "out of memory" in str(e).lower():
+            print(f"\n⚠ OOM at batch_size={config.batch_size}\n")
+            return False
+        print(f"\n✗ Failed: {e}\n")
+        return False
+    except Exception as e:
+        print(f"\n✗ Failed: {e}\n")
+        return False

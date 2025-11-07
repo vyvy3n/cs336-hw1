@@ -666,7 +666,8 @@ def run_load_checkpoint(
     """
     from cs336_basics.utils import load_checkpoint
 
-    return load_checkpoint(src, model, optimizer)
+    iteration, _ = load_checkpoint(src, model, optimizer)
+    return iteration
 
 
 def get_tokenizer(

@@ -139,7 +139,6 @@ class AdamW(torch.optim.Optimizer):
                     state["v"] = torch.zeros_like(p.data)  # Second moment estimate
 
                 # Get state variables
-                t = state["t"]
                 m = state["m"]
                 v = state["v"]
 
