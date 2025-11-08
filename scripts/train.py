@@ -91,6 +91,7 @@ def create_config_from_args(args) -> TrainingConfig:
                 # If --no_wandb is provided, explicitly disable wandb
                 if value:
                     overrides['use_wandb'] = False
+                continue
             else:
                 overrides[key] = value
 
