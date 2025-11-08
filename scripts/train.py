@@ -7,7 +7,7 @@ Most users should use --dataset presets for optimal defaults.
 
 Usage examples:
     # Use dataset preset (recommended)
-    python train.py --dataset tinystories --device cuda --use_wandb
+    python train.py --dataset tinystories --device cuda
     python train.py --dataset owt --learning_rate 1e-3 --batch_size 64
 
     # Custom dataset
@@ -31,7 +31,7 @@ def parse_args():
         epilog="""
 Examples:
   # Use dataset preset (recommended)
-  %(prog)s --dataset tinystories --device cuda --use_wandb
+  %(prog)s --dataset tinystories --device cuda
   %(prog)s --dataset owt --learning_rate 1e-3 --batch_size 64
 
   # Custom dataset
@@ -68,7 +68,7 @@ Examples:
     parser.add_argument("--resume_from", type=str, help="Resume training from checkpoint path")
 
     # Logging
-    parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--no_wandb", action="store_true", help="Disable Weights & Biases logging")
     parser.add_argument("--wandb_project", type=str, help="W&B project name")
     parser.add_argument("--wandb_run_name", type=str, help="W&B run name")
 
@@ -87,6 +87,10 @@ def create_config_from_args(args) -> TrainingConfig:
                 overrides['train_data_path'] = value
             elif key == 'val_data':
                 overrides['val_data_path'] = value
+            elif key == 'no_wandb':
+                # If --no_wandb is provided, explicitly disable wandb
+                if value:
+                    overrides['use_wandb'] = False
             else:
                 overrides[key] = value
 

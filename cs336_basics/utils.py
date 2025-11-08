@@ -70,7 +70,20 @@ def save_checkpoint(
     iteration: int,
     out: str | os.PathLike | BinaryIO | IO[bytes],
     training_state: dict = None,
+    model_config: dict = None,
 ) -> None:
+    """
+    Save a training checkpoint with model weights, optimizer state, and configuration.
+
+    Args:
+        model: The model to save
+        optimizer: The optimizer to save
+        iteration: Current training iteration
+        out: Output path or file-like object
+        training_state: Optional training state (e.g., early stopping state)
+        model_config: Optional model configuration dict with keys like:
+            vocab_size, context_length, num_layers, d_model, num_heads, d_ff, use_rope, theta
+    """
     checkpoint = {
         'model': model.state_dict(),
         'optimizer': optimizer.state_dict(),
@@ -79,6 +92,9 @@ def save_checkpoint(
     # Save additional training state (e.g., early stopping state)
     if training_state is not None:
         checkpoint['training_state'] = training_state
+    # Save model configuration for easy loading
+    if model_config is not None:
+        checkpoint['config'] = model_config
     torch.save(checkpoint, out)
 
 
