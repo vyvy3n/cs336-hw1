@@ -82,6 +82,26 @@ def main():
         help="Don't stop generation at EOS token",
     )
 
+    # Manual architecture specification (for checkpoints without config)
+    parser.add_argument(
+        "--num-heads",
+        type=int,
+        default=None,
+        help="Number of attention heads (if checkpoint doesn't contain config)",
+    )
+    parser.add_argument(
+        "--context-length",
+        type=int,
+        default=None,
+        help="Context length (if checkpoint doesn't contain config)",
+    )
+    parser.add_argument(
+        "--theta",
+        type=float,
+        default=10000.0,
+        help="RoPE theta parameter (default: 10000.0)",
+    )
+
     args = parser.parse_args()
     
     # Set random seed if provided
@@ -115,80 +135,86 @@ def main():
     print(f"Loading model from {args.checkpoint}...")
     checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
 
+    # Helper function to infer config from state_dict
+    def infer_config_from_state_dict(state_dict):
+        """Infer model configuration from state dict weights."""
+        vocab_size = state_dict["token_embeddings.weight"].shape[0]
+        d_model = state_dict["token_embeddings.weight"].shape[1]
+        num_layers = sum(1 for key in state_dict.keys()
+                       if key.startswith("transformer_blocks.")
+                       and key.endswith(".ln1.weight"))
+        d_ff = state_dict["transformer_blocks.0.ffn.w1.weight"].shape[0]
+        use_rope = any("rope" in key for key in state_dict.keys())
+
+        # Guess num_heads based on common configurations
+        if d_model == 512:
+            num_heads = 16
+        elif d_model == 768:
+            num_heads = 12
+        elif d_model == 1024:
+            num_heads = 16
+        else:
+            num_heads = max(1, d_model // 64)
+
+        print(f"WARNING: Cannot infer num_heads from checkpoint. Guessing num_heads={num_heads}")
+        print(f"         If generation quality is poor, specify --num-heads explicitly")
+
+        return {
+            'vocab_size': vocab_size,
+            'd_model': d_model,
+            'num_layers': num_layers,
+            'd_ff': d_ff,
+            'use_rope': use_rope,
+            'num_heads': num_heads,
+            'context_length': 512,  # Default
+            'theta': 10000.0,  # Default
+        }
+
+    # Helper function to apply manual overrides
+    def apply_overrides(config, args):
+        """Apply manual parameter overrides from command line args."""
+        import sys
+
+        if args.num_heads is not None:
+            if 'num_heads' in config and config['num_heads'] != args.num_heads:
+                print(f"  Overriding num_heads: {config['num_heads']} -> {args.num_heads}")
+            config['num_heads'] = args.num_heads
+
+        if args.context_length is not None:
+            if 'context_length' in config and config['context_length'] != args.context_length:
+                print(f"  Overriding context_length: {config['context_length']} -> {args.context_length}")
+            config['context_length'] = args.context_length
+
+        # Only override theta if explicitly provided by user
+        if '--theta' in sys.argv:
+            if 'theta' in config and config.get('theta', 10000.0) != args.theta:
+                print(f"  Overriding theta: {config.get('theta', 10000.0)} -> {args.theta}")
+            config['theta'] = args.theta
+
+        return config
+
     # Extract model configuration from checkpoint
-    # Handle different checkpoint formats
     if "config" in checkpoint:
-        # Format 1: checkpoint with config
-        config = checkpoint["config"]
-        model = TransformerLM(**config)
+        # Checkpoint with config (preferred)
+        print("✓ Found model config in checkpoint")
+        config = checkpoint["config"].copy()
+        config = apply_overrides(config, args)
         state_dict = checkpoint.get("model_state_dict", checkpoint.get("model"))
-        model.load_state_dict(state_dict)
-    elif "model" in checkpoint:
-        # Format 2: checkpoint with 'model' key (common format)
-        print("Warning: Checkpoint does not contain config. Attempting to infer...")
-        state_dict = checkpoint["model"]
-
-        # Infer vocab size from embedding layer
-        vocab_size = state_dict["token_embeddings.weight"].shape[0]
-        d_model = state_dict["token_embeddings.weight"].shape[1]
-
-        # Count transformer blocks
-        num_layers = sum(1 for key in state_dict.keys() if key.startswith("transformer_blocks.") and key.endswith(".ln1.weight"))
-
-        # Get other dimensions from first transformer block
-        num_heads = state_dict["transformer_blocks.0.attn.q_proj.weight"].shape[0] // d_model
-        d_ff = state_dict["transformer_blocks.0.ffn.w1.weight"].shape[0]
-
-        # Assume some defaults
-        context_length = 512  # Default, may not be accurate
-        use_rope = "transformer_blocks.0.attn.rope.inv_freq" in state_dict
-
-        print(f"Inferred config: vocab_size={vocab_size}, d_model={d_model}, num_layers={num_layers}, "
-              f"num_heads={num_heads}, d_ff={d_ff}, use_rope={use_rope}")
-
-        model = TransformerLM(
-            vocab_size=vocab_size,
-            context_length=context_length,
-            num_layers=num_layers,
-            d_model=d_model,
-            num_heads=num_heads,
-            d_ff=d_ff,
-            use_rope=use_rope,
-        )
-        model.load_state_dict(state_dict)
     else:
-        # Format 3: checkpoint is the state dict itself
+        # Checkpoint without config - need to infer
         print("Warning: Checkpoint does not contain config. Attempting to infer...")
-        state_dict = checkpoint
+        state_dict = checkpoint.get("model", checkpoint)
+        config = infer_config_from_state_dict(state_dict)
+        config = apply_overrides(config, args)
 
-        # Infer vocab size from embedding layer
-        vocab_size = state_dict["token_embeddings.weight"].shape[0]
-        d_model = state_dict["token_embeddings.weight"].shape[1]
+    # Print final config
+    print(f"Model config: vocab_size={config['vocab_size']}, d_model={config['d_model']}, "
+          f"num_layers={config['num_layers']}, num_heads={config['num_heads']}, "
+          f"d_ff={config['d_ff']}, use_rope={config['use_rope']}, context_length={config['context_length']}")
 
-        # Count transformer blocks
-        num_layers = sum(1 for key in state_dict.keys() if key.startswith("transformer_blocks.") and key.endswith(".ln1.weight"))
-
-        # Get other dimensions from first transformer block
-        num_heads = state_dict["transformer_blocks.0.attn.q_proj.weight"].shape[0] // d_model
-        d_ff = state_dict["transformer_blocks.0.ffn.w1.weight"].shape[0]
-
-        # Assume some defaults
-        context_length = 512  # Default, may not be accurate
-        use_rope = "transformer_blocks.0.attn.rope.inv_freq" in state_dict
-
-        print(f"Inferred config: vocab_size={vocab_size}, d_model={d_model}, num_layers={num_layers}, "
-              f"num_heads={num_heads}, d_ff={d_ff}, use_rope={use_rope}")
-
-        model = TransformerLM(
-            vocab_size=vocab_size,
-            context_length=context_length,
-            num_layers=num_layers,
-            d_model=d_model,
-            num_heads=num_heads,
-            d_ff=d_ff,
-            use_rope=use_rope,
-        )
-        model.load_state_dict(state_dict)
+    # Create and load model
+    model = TransformerLM(**config)
+    model.load_state_dict(state_dict)
     
     model = model.to(args.device)
     model.eval()
@@ -236,4 +262,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

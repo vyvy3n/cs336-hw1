@@ -280,12 +280,24 @@ class Trainer:
             'patience_counter': self.patience_counter,
         }
 
+        # Prepare model configuration for easy loading
+        model_config = {
+            'vocab_size': self.config.vocab_size,
+            'context_length': self.config.context_length,
+            'num_layers': self.config.num_layers,
+            'd_model': self.config.d_model,
+            'num_heads': self.config.num_heads,
+            'd_ff': self.config.d_ff,
+            'use_rope': self.config.use_rope,
+            'theta': self.config.theta,
+        }
+
         # Save numbered checkpoint
         print(f"Saving checkpoint to {numbered_path}")
-        save_checkpoint_impl(self.model, self.optimizer, self.current_iter, numbered_path, training_state)
+        save_checkpoint_impl(self.model, self.optimizer, self.current_iter, numbered_path, training_state, model_config)
 
         # Save latest checkpoint
-        save_checkpoint_impl(self.model, self.optimizer, self.current_iter, latest_path, training_state)
+        save_checkpoint_impl(self.model, self.optimizer, self.current_iter, latest_path, training_state, model_config)
 
         # Save metrics if provided
         if metrics is not None:
