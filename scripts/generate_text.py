@@ -173,6 +173,8 @@ def main():
     # Helper function to apply manual overrides
     def apply_overrides(config, args):
         """Apply manual parameter overrides from command line args."""
+        import sys
+
         if args.num_heads is not None:
             if 'num_heads' in config and config['num_heads'] != args.num_heads:
                 print(f"  Overriding num_heads: {config['num_heads']} -> {args.num_heads}")
@@ -183,7 +185,8 @@ def main():
                 print(f"  Overriding context_length: {config['context_length']} -> {args.context_length}")
             config['context_length'] = args.context_length
 
-        if args.theta != 10000.0:
+        # Only override theta if explicitly provided by user
+        if '--theta' in sys.argv:
             if 'theta' in config and config.get('theta', 10000.0) != args.theta:
                 print(f"  Overriding theta: {config.get('theta', 10000.0)} -> {args.theta}")
             config['theta'] = args.theta
