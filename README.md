@@ -350,12 +350,14 @@ wandb login
 
 **Usage:**
 
-```bash
-# Train with W&B logging (default)
-uv run scripts/train.py --dataset tinystories --device cuda
+> **⚠️ IMPORTANT:** W&B logging is **disabled by default**. You must explicitly add `--use_wandb` flag to enable it.
 
-# Train without W&B
-uv run scripts/train.py --dataset tinystories --device cuda --no_wandb
+```bash
+# Train WITH W&B logging (must specify --use_wandb)
+uv run scripts/train.py --dataset tinystories --device cuda --use_wandb
+
+# Train WITHOUT W&B (default - no flag needed)
+uv run scripts/train.py --dataset tinystories --device cuda
 ```
 
 **Logged Metrics:**
@@ -786,6 +788,8 @@ uv run scripts/generate_text.py \
 ## Monitoring & Logging
 
 ### Weights & Biases (Recommended)
+
+> **⚠️ IMPORTANT:** W&B logging is **disabled by default**. You must add `--use_wandb` flag when running `scripts/train.py` to enable W&B logging.
 
 W&B provides real-time monitoring and experiment tracking.
 

@@ -54,7 +54,9 @@ If automatic download fails:
 2. Place the files in `data/TinyStories_raw/`
 3. Run: `uv run python scripts/prepare_tinystories.py --skip_download --vocab_size 10000`
 
-### 3. Login to Weights & Biases
+### 3. Login to Weights & Biases (Optional)
+
+> **⚠️ NOTE:** W&B logging is **disabled by default** in experiment scripts. Most experiment scripts explicitly set `use_wandb=True` in their code. If you want to disable W&B, modify the scripts to set `use_wandb=False`.
 
 ```bash
 wandb login
@@ -139,14 +141,9 @@ uv run python experiments/learning_rate_sweep.py \
 
 ### Running Without W&B
 
-If you don't want to use Weights & Biases:
+> **⚠️ NOTE:** The experiment scripts (`ablations.py`, `batch_size_sweep.py`, `learning_rate_sweep.py`) explicitly set `use_wandb=True` in their code. To disable W&B logging, you need to modify the scripts and change `use_wandb=True` to `use_wandb=False`.
 
-```bash
-uv run python experiments/learning_rate_sweep.py \
-    --sweep_type grid \
-    --device cuda \
-    --no_wandb
-```
+For the main training script (`scripts/train.py`), W&B is disabled by default unless you add `--use_wandb` flag.
 
 ### CPU Training
 

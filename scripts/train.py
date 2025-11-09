@@ -68,7 +68,7 @@ Examples:
     parser.add_argument("--resume_from", type=str, help="Resume training from checkpoint path")
 
     # Logging
-    parser.add_argument("--no_wandb", action="store_true", help="Disable Weights & Biases logging")
+    parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb_project", type=str, help="W&B project name")
     parser.add_argument("--wandb_run_name", type=str, help="W&B run name")
 
@@ -87,11 +87,6 @@ def create_config_from_args(args) -> TrainingConfig:
                 overrides['train_data_path'] = value
             elif key == 'val_data':
                 overrides['val_data_path'] = value
-            elif key == 'no_wandb':
-                # If --no_wandb is provided, explicitly disable wandb
-                if value:
-                    overrides['use_wandb'] = False
-                continue
             else:
                 overrides[key] = value
 

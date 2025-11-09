@@ -60,7 +60,7 @@ class TrainingConfig:
     early_stopping_min_delta: float = 0.001  # Minimum change to qualify as improvement
 
     # ========== Weights & Biases (Optional) ==========
-    use_wandb: bool = True  # Whether to use Weights & Biases for logging
+    use_wandb: bool = False  # Whether to use Weights & Biases for logging
     wandb_project: str = "cs336-hw1"  # W&B project name
     wandb_run_name: Optional[str] = None  # W&B run name (None = auto-generate)
 
