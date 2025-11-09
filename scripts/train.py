@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Main training script for GPT-2 style transformer language models.
-
-This script provides a simplified command-line interface for training transformer models.
-Most users should use --dataset presets for optimal defaults.
+Main training script for transformer language models.
 
 Usage examples:
     # Use dataset preset (recommended)
@@ -24,23 +21,7 @@ from cs336_basics.training import Trainer
 
 
 def parse_args():
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Train a GPT-2 style transformer language model",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        epilog="""
-Examples:
-  # Use dataset preset (recommended)
-  %(prog)s --dataset tinystories --device cuda
-  %(prog)s --dataset owt --learning_rate 1e-3 --batch_size 64
-
-  # Custom dataset
-  %(prog)s --train_data data/my_train.npy --val_data data/my_val.npy --vocab_size 50000
-
-  # Resume training
-  %(prog)s --dataset tinystories --resume_from checkpoints/checkpoint_5000.pt
-        """
-    )
+    parser = argparse.ArgumentParser()
 
     # Dataset preset (most common usage)
     parser.add_argument(

@@ -144,7 +144,6 @@ def main():
                        if key.startswith("transformer_blocks.")
                        and key.endswith(".ln1.weight"))
         d_ff = state_dict["transformer_blocks.0.ffn.w1.weight"].shape[0]
-        use_rope = any("rope" in key for key in state_dict.keys())
 
         # Guess num_heads based on common configurations
         if d_model == 512:
@@ -164,7 +163,7 @@ def main():
             'd_model': d_model,
             'num_layers': num_layers,
             'd_ff': d_ff,
-            'use_rope': use_rope,
+            'use_rope': True,  # Default
             'num_heads': num_heads,
             'context_length': 512,  # Default
             'theta': 10000.0,  # Default
