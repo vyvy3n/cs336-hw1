@@ -316,6 +316,16 @@ uv run scripts/generate_text.py \
     --max-tokens 256
 ```
 
+Or, inference using yaml
+
+```bash
+uv run scripts/generate_text.py \
+    --checkpoint checkpoints/tinystories/checkpoint_latest.pt \
+    --tokenizer artifacts/tinystories_bpe.yaml \
+    --prompt "Once upon a time" \
+    --max-tokens 250
+```
+
 **Features:**
 - ✅ Stops on `<|endoftext|>` token
 - ✅ Supports `max_tokens` parameter
@@ -956,36 +966,3 @@ uv run scripts/generate_text.py \
     --max-tokens 256
 ```
 
----
-
-## Additional Resources
-
-- **TOKENIZER_GUIDE.md**: Detailed guide on BPE tokenizer training
-- **experiments/README.md**: Additional experiment documentation
-- **Assignment PDF**: Full assignment description and requirements
-
-## Tips for Success
-
-1. **Start with small experiments**: Test with `--max_iters 100` first
-2. **Use W&B**: Makes comparing runs much easier
-3. **Monitor early**: Check first few hundred iterations
-4. **Save everything**: W&B automatically saves, but keep local backups
-5. **Document as you go**: Keep notes on observations for your report
-6. **Compare systematically**: Use same seeds and configs when comparing
-
-## Citation
-
-If you use this codebase, please cite:
-
-```bibtex
-@misc{cs336-hw1,
-  title={CS336 Spring 2025 Assignment 1: Basics},
-  author={Stanford CS336 Course Staff},
-  year={2025},
-  url={https://github.com/stanford-cs336/spring2025-assignment1-basics}
-}
-```
-
----
-
-**Questions?** Check the assignment PDF or raise a GitHub issue.

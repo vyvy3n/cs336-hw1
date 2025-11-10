@@ -3,7 +3,8 @@
 Simple script to generate text from a trained language model.
 
 Usage:
-    python generate_text.py --checkpoint path/to/checkpoint.pt --prompt "Once upon a time"
+    uv run python scripts/generate_text.py --checkpoint path/to/checkpoint.pt --prompt "Once upon a time"
+    uv run python scripts/generate_text.py --checkpoint checkpoints/owt/checkpoint_latest.pt --prompt "Once upon a time"
 """
 
 import argparse
@@ -82,25 +83,7 @@ def main():
         help="Don't stop generation at EOS token",
     )
 
-    # Manual architecture specification (for checkpoints without config)
-    parser.add_argument(
-        "--num-heads",
-        type=int,
-        default=None,
-        help="Number of attention heads (if checkpoint doesn't contain config)",
-    )
-    parser.add_argument(
-        "--context-length",
-        type=int,
-        default=None,
-        help="Context length (if checkpoint doesn't contain config)",
-    )
-    parser.add_argument(
-        "--theta",
-        type=float,
-        default=10000.0,
-        help="RoPE theta parameter (default: 10000.0)",
-    )
+
 
     args = parser.parse_args()
     
@@ -155,8 +138,8 @@ def main():
         else:
             num_heads = max(1, d_model // 64)
 
-        print(f"WARNING: Cannot infer num_heads from checkpoint. Guessing num_heads={num_heads}")
-        print(f"         If generation quality is poor, specify --num-heads explicitly")
+        print(f"  Inferred num_heads={num_heads} (based on d_model={d_model})")
+        print(f"  If generation fails or produces poor results, the checkpoint may be incompatible")
 
         return {
             'vocab_size': vocab_size,
@@ -169,42 +152,18 @@ def main():
             'theta': 10000.0,  # Default
         }
 
-    # Helper function to apply manual overrides
-    def apply_overrides(config, args):
-        """Apply manual parameter overrides from command line args."""
-        import sys
-
-        if args.num_heads is not None:
-            if 'num_heads' in config and config['num_heads'] != args.num_heads:
-                print(f"  Overriding num_heads: {config['num_heads']} -> {args.num_heads}")
-            config['num_heads'] = args.num_heads
-
-        if args.context_length is not None:
-            if 'context_length' in config and config['context_length'] != args.context_length:
-                print(f"  Overriding context_length: {config['context_length']} -> {args.context_length}")
-            config['context_length'] = args.context_length
-
-        # Only override theta if explicitly provided by user
-        if '--theta' in sys.argv:
-            if 'theta' in config and config.get('theta', 10000.0) != args.theta:
-                print(f"  Overriding theta: {config.get('theta', 10000.0)} -> {args.theta}")
-            config['theta'] = args.theta
-
-        return config
-
     # Extract model configuration from checkpoint
     if "config" in checkpoint:
         # Checkpoint with config (preferred)
         print("✓ Found model config in checkpoint")
         config = checkpoint["config"].copy()
-        config = apply_overrides(config, args)
         state_dict = checkpoint.get("model_state_dict", checkpoint.get("model"))
     else:
         # Checkpoint without config - need to infer
-        print("Warning: Checkpoint does not contain config. Attempting to infer...")
+        print("⚠ Warning: Checkpoint does not contain config. Attempting to infer from weights...")
+        print("  This may be inaccurate. Consider re-saving the checkpoint with config.")
         state_dict = checkpoint.get("model", checkpoint)
         config = infer_config_from_state_dict(state_dict)
-        config = apply_overrides(config, args)
 
     # Print final config
     print(f"Model config: vocab_size={config['vocab_size']}, d_model={config['d_model']}, "
